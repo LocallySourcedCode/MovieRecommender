@@ -1,0 +1,14 @@
+# Runtime dependencies
+fastapi
+sqlmodel
+sqlalchemy
+pydantic
+email-validator
+python-jose
+passlib
+python-multipart
+uvicorn
+
+# Test dependencies
+pytest
+httpx
