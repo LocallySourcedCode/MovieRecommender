@@ -6,6 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlmodel import Session, select
 from jose import jwt, JWTError
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import get_session, init_db, ensure_tables
 from app.models import User, Group, Participant, MovieCandidate, MovieVote
@@ -39,6 +40,15 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="MovieRecommender API", lifespan=lifespan)
+
+# CORS for local React dev server (Vite on port 5173). Safe for dev; tighten for prod.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 oauth2_optional = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
