@@ -1,6 +1,7 @@
 from typing import Optional
 import random
 import string
+import os
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -9,7 +10,7 @@ from jose import jwt, JWTError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import get_session, init_db, ensure_tables
-from app.models import User, Group, Participant, MovieCandidate, MovieVote
+from app.models import User, Group, Participant, MovieCandidate, MovieVote, GenreNomination, GenreVote, GenreFinalized
 from app.schemas import UserCreate, UserRead, Token
 from app.schemas_group import (
     GroupCreateGuest,
@@ -18,6 +19,8 @@ from app.schemas_group import (
     GroupJoinResponse,
     GroupOut,
     ParticipantOut,
+    GenresNominateIn,
+    GenreVoteIn,
 )
 from app.security import (
     hash_password,
@@ -28,7 +31,7 @@ from app.security import (
     parse_subject,
     create_participant_token,
 )
-from app.services.recommendations import get_next_candidate
+from app.services.recommendations import get_next_candidate, get_candidate_queue
 import json
 
 from contextlib import asynccontextmanager
@@ -167,7 +170,95 @@ def whoami(token: str = Depends(oauth2_scheme), session: Session = Depends(get_s
     if kind == "user":
         return {"kind": "user", "id": obj.id, "email": obj.email}
     elif kind == "participant":
-        return {"kind": "participant", "id": obj.id, "group_id": obj.group_id, "display_name": obj.display_name}
+        return {"kind": "participant", "id": obj.id, "group_id": obj.group_id, "display_name": obj.display_name, "is_host": bool(getattr(obj, "is_host", False))}
+
+
+@app.get("/config")
+def config():
+    """Minimal config introspection for debugging TMDb integration."""
+    tmdb_configured = bool(os.getenv("TMDB_READ_TOKEN") or os.getenv("TMDB_API_KEY"))
+    region = os.getenv("TMDB_REGION", "US")
+    return {"tmdb_configured": tmdb_configured, "tmdb_region": region}
+
+
+def _is_group_active(g: Group) -> bool:
+    return (g.phase or "setup") != "finalized"
+
+
+def _find_active_group_for_user(session: Session, user_id: int) -> Optional[Group]:
+    # Find any non-finalized group where this user is a participant
+    rows = session.exec(select(Participant).where(Participant.user_id == user_id)).all()
+    for p in rows:
+        grp = session.get(Group, p.group_id)
+        if grp and _is_group_active(grp):
+            return grp
+    return None
+
+
+def _disband_group(session: Session, group: Group):
+    # Delete all related rows to fully remove the group
+    # Movie votes
+    for mv in session.exec(select(MovieVote).where(MovieVote.group_id == group.id)).all():
+        session.delete(mv)
+    # Movie candidates
+    for mc in session.exec(select(MovieCandidate).where(MovieCandidate.group_id == group.id)).all():
+        session.delete(mc)
+    # Genre votes/nom
+    for gv in session.exec(select(GenreVote).where(GenreVote.group_id == group.id)).all():
+        session.delete(gv)
+    for gn in session.exec(select(GenreNomination).where(GenreNomination.group_id == group.id)).all():
+        session.delete(gn)
+    # Finalized genres
+    for gf in session.exec(select(GenreFinalized).where(GenreFinalized.group_id == group.id)).all():
+        session.delete(gf)
+    # Participants
+    for p in session.exec(select(Participant).where(Participant.group_id == group.id)).all():
+        session.delete(p)
+    # Group last
+    session.delete(group)
+    session.commit()
+
+
+@app.post("/groups/leave")
+def leave_current_group(token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    """Leave the current active group. If caller is the host, disband the group.
+    Works for both participant and user tokens.
+    """
+    ensure_tables(session)
+    kind, principal = _resolve_principal(session, token)
+    if kind == "participant":
+        participant: Participant = principal
+        group = session.get(Group, participant.group_id)
+        if not group or not _is_group_active(group):
+            raise HTTPException(status_code=404, detail="No active group to leave")
+        code = group.code
+        if participant.is_host:
+            _disband_group(session, group)
+            return {"ok": True, "action": "disbanded", "group_code": code}
+        else:
+            session.delete(participant)
+            session.commit()
+            return {"ok": True, "action": "left", "group_code": code}
+    elif kind == "user":
+        group = _find_active_group_for_user(session, principal.id)
+        if not group:
+            raise HTTPException(status_code=404, detail="No active group to leave")
+        code = group.code
+        p = session.exec(
+            select(Participant).where(Participant.group_id == group.id, Participant.user_id == principal.id)
+        ).first()
+        if p and p.is_host:
+            _disband_group(session, group)
+            return {"ok": True, "action": "disbanded", "group_code": code}
+        elif p:
+            session.delete(p)
+            session.commit()
+            return {"ok": True, "action": "left", "group_code": code}
+        else:
+            # No participant row, nothing to do
+            raise HTTPException(status_code=404, detail="No active group to leave")
+    else:
+        raise HTTPException(status_code=401, detail="Invalid token subject")
 
 
 @app.post("/groups", response_model=GroupCreateResponse)
@@ -189,10 +280,33 @@ def create_group(
 
     if token:
         kind, principal = _resolve_principal(session, token)
+        if kind == "participant":
+            # Participant token represents an existing group membership; require leaving first
+            grp = session.get(Group, principal.group_id)
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "participant_in_active_group",
+                    "message": "You are already in a group. Leave or disband before creating a new group.",
+                    "group_code": grp.code if grp else None,
+                    "role": "host" if getattr(principal, "is_host", False) else "member",
+                },
+            )
         if kind != "user":
-            raise HTTPException(status_code=403, detail="Only signed-in users can use bearer token here")
+            raise HTTPException(status_code=401, detail="Invalid token subject")
+        # Enforce single active membership for users
+        existing_group = _find_active_group_for_user(session, principal.id)
+        if existing_group:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "already_in_active_group",
+                    "message": "You are already in another active group. Leave or disband it first.",
+                    "group_code": existing_group.code,
+                },
+            )
         # Create group with host_user_id
-        group = Group(code=code, host_user_id=principal.id)
+        group = Group(code=code, host_user_id=principal.id, phase="genre_nomination")
         session.add(group)
         session.commit()
         session.refresh(group)
@@ -207,7 +321,7 @@ def create_group(
         # Guest path requires display_name
         if guest_payload is None or not guest_payload.display_name:
             raise HTTPException(status_code=422, detail="display_name is required for guests")
-        group = Group(code=code, host_user_id=None)
+        group = Group(code=code, host_user_id=None, phase="genre_nomination")
         session.add(group)
         session.commit()
         session.refresh(group)
@@ -248,6 +362,17 @@ def join_group(
     if token:
         kind, principal = _resolve_principal(session, token)
         if kind == "user":
+            # Enforce single active membership: if user is in another active group, require leaving first
+            other_group = _find_active_group_for_user(session, principal.id)
+            if other_group and other_group.id != group.id:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "already_in_active_group",
+                        "message": "You are already in another active group. Leave it before joining a new one.",
+                        "group_code": other_group.code,
+                    },
+                )
             # idempotent join for users
             existing = session.exec(
                 select(Participant).where(Participant.group_id == group.id, Participant.user_id == principal.id)
@@ -353,13 +478,51 @@ def get_current_movie(code: str, token: str = Depends(oauth2_scheme), session: S
         raise HTTPException(status_code=404, detail="Group not found")
     _ = _require_member(session, group, token)
 
+    # Purge any non-TMDb candidates if TMDb is configured to guarantee no demo leftovers
+    tmdb_configured = bool(os.getenv("TMDB_READ_TOKEN") or os.getenv("TMDB_API_KEY"))
+    if tmdb_configured:
+        existing_cands = session.exec(select(MovieCandidate).where(MovieCandidate.group_id == group.id)).all()
+        purged_ids = []
+        for mc in existing_cands:
+            if (mc.source or "").lower() != "tmdb":
+                purged_ids.append(mc.id)
+                session.delete(mc)
+        if purged_ids:
+            # remove votes tied to purged candidates and reset current if needed
+            votes = session.exec(select(MovieVote).where(MovieVote.group_id == group.id)).all()
+            for v in votes:
+                if v.movie_id in purged_ids:
+                    session.delete(v)
+            if group.current_movie_id in purged_ids:
+                group.current_movie_id = None
+            session.add(group)
+            session.commit()
+
+    # Note: movies can be previewed even before movie_selection; finalized genre filter applies when available.
+
     # If current exists and is not disqualified, return it
     if group.current_movie_id:
         current = session.get(MovieCandidate, group.current_movie_id)
         if current and not current.disqualified:
-            return {"status": "current", "candidate": _candidate_payload(current)}
+            # If genres are finalized and TMDb is configured, only accept a queued TMDb candidate
+            finalized_now = _finalized_genres(session, group.id)
+            if finalized_now and tmdb_configured:
+                try:
+                    meta = json.loads(current.metadata_json or "{}")
+                except Exception:
+                    meta = {}
+                reason = meta.get("reason") if isinstance(meta, dict) else None
+                if not (isinstance(reason, str) and reason.startswith("tmdb:queue")):
+                    # Invalidate current so we can rebuild
+                    group.current_movie_id = None
+                    session.add(group)
+                    session.commit()
+                else:
+                    return {"status": "current", "candidate": _candidate_payload(current)}
+            else:
+                return {"status": "current", "candidate": _candidate_payload(current)}
 
-    # Otherwise pick next compatible candidate from demo
+    # Otherwise, prefer pre-generated queue when available/finalized
     _res = session.exec(select(MovieCandidate.title).where(MovieCandidate.group_id == group.id))
     try:
         _titles = _res.scalars().all()
@@ -368,19 +531,104 @@ def get_current_movie(code: str, token: str = Depends(oauth2_scheme), session: S
         _titles = _res.all()
     used = set(_titles)
     shared = _shared_providers(session, group.id)
-    item = get_next_candidate(used_titles=used, shared_providers=shared)
+    finalized = _finalized_genres(session, group.id)
+    # Preserve finalized order (most-voted first) for tiered recommendation priority
+    genres_ordered = finalized if finalized else None
+
+    # If genres are finalized but we have pre-finalization candidates (e.g., demo/on-demand), purge and rebuild
+    if genres_ordered and (os.getenv("TMDB_READ_TOKEN") or os.getenv("TMDB_API_KEY")):
+        existing_cands = session.exec(
+            select(MovieCandidate).where(MovieCandidate.group_id == group.id).order_by(MovieCandidate.id.asc())
+        ).all()
+        if existing_cands:
+            try:
+                first_meta = json.loads(existing_cands[0].metadata_json or "{}")
+            except Exception:
+                first_meta = {}
+            reason = first_meta.get("reason") if isinstance(first_meta, dict) else None
+            is_queue = isinstance(reason, str) and reason.startswith("tmdb:queue")
+            if not is_queue:
+                # Clear movie votes and candidates; reset current pointer so we can build the proper queue
+                for mv in session.exec(select(MovieVote).where(MovieVote.group_id == group.id)).all():
+                    session.delete(mv)
+                for mc in existing_cands:
+                    session.delete(mc)
+                group.current_movie_id = None
+                session.add(group)
+                session.commit()
+
+    # If no candidates exist yet and genres are finalized, prebuild a queue of up to 100 movies
+    existing_any = session.exec(select(MovieCandidate).where(MovieCandidate.group_id == group.id)).first()
+    if genres_ordered and not existing_any:
+        queue = get_candidate_queue(genres=genres_ordered, shared_providers=shared, target_size=100)
+        if queue:
+            for it in queue:
+                session.add(
+                    MovieCandidate(
+                        group_id=group.id,
+                        title=it.get("title"),
+                        source=it.get("source", "tmdb"),
+                        metadata_json=json.dumps({
+                            "year": it.get("year"),
+                            "description": it.get("description"),
+                            "poster_url": it.get("poster_url"),
+                            "providers": it.get("providers", []),
+                            "rotten_tomatoes": it.get("rotten_tomatoes"),
+                            "reason": it.get("reason"),
+                        }),
+                        disqualified=False,
+                    )
+                )
+            session.commit()
+            # Set current to the first non-disqualified entry in the queue
+            first = session.exec(
+                select(MovieCandidate)
+                .where(MovieCandidate.group_id == group.id, MovieCandidate.disqualified == False)  # noqa: E712
+                .order_by(MovieCandidate.id.asc())
+            ).first()
+            if first:
+                group.current_movie_id = first.id
+                session.add(group)
+                session.commit()
+                return {"status": "current", "candidate": _candidate_payload(first)}
+
+    # If we already have a persisted queue but no current, advance to next
+    if not group.current_movie_id:
+        next_cand = session.exec(
+            select(MovieCandidate)
+            .where(MovieCandidate.group_id == group.id, MovieCandidate.disqualified == False)  # noqa: E712
+            .order_by(MovieCandidate.id.asc())
+        ).first()
+        if next_cand:
+            group.current_movie_id = next_cand.id
+            session.add(group)
+            session.commit()
+            return {"status": "current", "candidate": _candidate_payload(next_cand)}
+
+    # On-demand single pick (pre-movie_selection or when no prebuilt queue)
+    item = get_next_candidate(used_titles=used, shared_providers=shared, genres=genres_ordered)
     if not item:
-        raise HTTPException(status_code=404, detail="No more candidates available")
+        # Try without genre filter
+        item = get_next_candidate(used_titles=used, shared_providers=shared, genres=None)
+    if not item:
+        # Absolute last attempt within TMDb: ignore used/providers/genres
+        item = get_next_candidate(used_titles=set(), shared_providers=None, genres=None)
+    if not item:
+        # TMDb-only mode: never fall back to demo/static items
+        msg = "TMDb not configured (set TMDB_READ_TOKEN or TMDB_API_KEY)" if not tmdb_configured else "No TMDb candidates available; please retry or reset genres"
+        raise HTTPException(status_code=503, detail=msg)
+
     movie = MovieCandidate(
         group_id=group.id,
         title=item["title"],
-        source="demo",
+        source=item.get("source", "tmdb"),
         metadata_json=json.dumps({
             "year": item.get("year"),
             "description": item.get("description"),
             "poster_url": item.get("poster_url"),
             "providers": item.get("providers", []),
             "rotten_tomatoes": item.get("rotten_tomatoes"),
+            "reason": item.get("reason"),
         }),
         disqualified=False,
     )
@@ -677,3 +925,302 @@ def register_page():
         </html>
         """
     )
+
+
+# ---- Genre nomination and voting ----
+ALLOWED_GENRES = [
+    "Action","Comedy","Drama","Thriller","Horror","Sci-Fi","Romance","Animation",
+    "Family","Adventure","Documentary","Fantasy","Mystery","Crime"
+]
+_GENRE_MAP = {g.lower(): g for g in ALLOWED_GENRES}
+
+
+def _canonical_genre(name: str) -> Optional[str]:
+    if not isinstance(name, str):
+        return None
+    return _GENRE_MAP.get(name.strip().lower())
+
+
+def _genre_tally(session: Session, group_id: int) -> list[dict]:
+    rows = session.exec(select(GenreNomination).where(GenreNomination.group_id == group_id)).all()
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r.genre] = counts.get(r.genre, 0) + 1
+    out = [{"genre": g, "count": c} for g, c in counts.items()]
+    out.sort(key=lambda x: (-x["count"], x["genre"]))
+    return out
+
+
+@app.post("/groups/{code}/genres/nominate")
+def nominate_genres(
+    code: str,
+    payload: GenresNominateIn,
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
+):
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    participant = _require_member(session, group, token)
+
+    # Canonicalize and de-duplicate input
+    raw = payload.genres or []
+    canon = []
+    seen = set()
+    for g in raw:
+        cg = _canonical_genre(g)
+        if not cg:
+            raise HTTPException(status_code=400, detail=f"Invalid genre: {g}")
+        if cg not in seen:
+            canon.append(cg)
+            seen.add(cg)
+    if len(canon) == 0:
+        raise HTTPException(status_code=400, detail="At least one valid genre required")
+    if len(canon) > 2:
+        raise HTTPException(status_code=400, detail="Maximum 2 genres per nomination request")
+
+    # Enforce per-participant limit of 2 total nominations
+    existing = session.exec(
+        select(GenreNomination).where(
+            GenreNomination.group_id == group.id,
+            GenreNomination.participant_id == participant.id,
+        )
+    ).all()
+    if len(existing) >= 2:
+        raise HTTPException(status_code=409, detail="Nomination limit reached (2)")
+    remaining = 2 - len(existing)
+    if len(canon) > remaining:
+        raise HTTPException(status_code=409, detail="Nomination would exceed limit (2)")
+
+    # Create any missing nominations
+    existing_genres = {e.genre for e in existing}
+    created = 0
+    for g in canon:
+        if g in existing_genres:
+            continue
+        session.add(GenreNomination(group_id=group.id, participant_id=participant.id, genre=g))
+        created += 1
+    if created:
+        session.commit()
+        _maybe_advance_after_nominations(session, group)
+
+    return {"ok": True, "nominations": _genre_tally(session, group.id)}
+
+
+@app.get("/groups/{code}/genres/nominations")
+def list_nominations(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    _require_member(session, group, token)
+    return {"nominations": _genre_tally(session, group.id), "allowed": ALLOWED_GENRES}
+
+
+@app.post("/groups/{code}/genres/vote")
+def vote_genre(
+    code: str,
+    payload: GenreVoteIn,
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
+):
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    participant = _require_member(session, group, token)
+
+    cg = _canonical_genre(payload.genre)
+    if not cg:
+        raise HTTPException(status_code=400, detail="Invalid genre")
+
+    # Must be a nominated genre by someone in the group
+    any_nom = session.exec(
+        select(GenreNomination).where(GenreNomination.group_id == group.id, GenreNomination.genre == cg)
+    ).first()
+    if not any_nom:
+        raise HTTPException(status_code=400, detail="Genre not nominated")
+
+    # Enforce max 3 votes per participant across genres
+    existing_votes = session.exec(
+        select(GenreVote).where(GenreVote.group_id == group.id, GenreVote.participant_id == participant.id)
+    ).all()
+    if any(v.genre == cg for v in existing_votes):
+        # idempotent
+        return {"ok": True, "voted": cg}
+    if len(existing_votes) >= 3:
+        raise HTTPException(status_code=409, detail="Vote limit reached (3)")
+
+    session.add(GenreVote(group_id=group.id, participant_id=participant.id, genre=cg, value=1))
+    session.commit()
+    _maybe_finalize_after_votes(session, group)
+    return {"ok": True, "voted": cg}
+
+
+@app.get("/groups/{code}/genres/standings")
+def genre_standings(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    """Return vote tallies for nominated genres and the current plurality leader.
+    Does not advance any phase; purely informational for the UI.
+    """
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    _require_member(session, group, token)
+
+    # Build tally for votes
+    votes = session.exec(select(GenreVote).where(GenreVote.group_id == group.id)).all()
+    vcounts: dict[str, int] = {}
+    for v in votes:
+        vcounts[v.genre] = vcounts.get(v.genre, 0) + (v.value or 0)
+    standings = [{"genre": g, "votes": c} for g, c in vcounts.items()]
+    standings.sort(key=lambda x: (-x["votes"], x["genre"]))
+    leader = standings[0]["genre"] if standings else None
+
+    return {
+        "standings": standings,
+        "leader": leader,
+        "nominations": _genre_tally(session, group.id),
+        "allowed": ALLOWED_GENRES,
+    }
+
+
+@app.post("/groups/{code}/genres/reset")
+def reset_genres(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    """Host-only: restart the movie recommendation process back to genre nomination.
+
+    Clears all genre nominations, votes, and finalized genres; clears movie votes and
+    candidates; resets current and winner; and sets the phase to "genre_nomination".
+    """
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    caller = _require_member(session, group, token)
+    if not caller.is_host:
+        raise HTTPException(status_code=403, detail="Only host can reset genres")
+
+    # Delete genre votes, nominations, finalized
+    for v in session.exec(select(GenreVote).where(GenreVote.group_id == group.id)).all():
+        session.delete(v)
+    for n in session.exec(select(GenreNomination).where(GenreNomination.group_id == group.id)).all():
+        session.delete(n)
+    for f in session.exec(select(GenreFinalized).where(GenreFinalized.group_id == group.id)).all():
+        session.delete(f)
+    # Delete movie votes and candidates; reset pointers
+    for mv in session.exec(select(MovieVote).where(MovieVote.group_id == group.id)).all():
+        session.delete(mv)
+    for mc in session.exec(select(MovieCandidate).where(MovieCandidate.group_id == group.id)).all():
+        session.delete(mc)
+    group.current_movie_id = None
+    group.winner_movie_id = None
+    group.phase = "genre_nomination"
+    session.add(group)
+    session.commit()
+    return {"ok": True, "phase": group.phase}
+
+
+# ---- Progress and phase helpers ----
+from collections import Counter
+
+def _participants_in_group(session: Session, group_id: int) -> list[Participant]:
+    return session.exec(select(Participant).where(Participant.group_id == group_id)).all()
+
+
+def _count_distinct_nominees(session: Session, group_id: int) -> int:
+    rows = session.exec(select(GenreNomination.participant_id).where(GenreNomination.group_id == group_id)).all()
+    return len(set(rows))
+
+
+def _count_distinct_voters(session: Session, group_id: int) -> int:
+    rows = session.exec(select(GenreVote.participant_id).where(GenreVote.group_id == group_id)).all()
+    return len(set(rows))
+
+
+def _finalized_genres(session: Session, group_id: int) -> list[str]:
+    rows = session.exec(select(GenreFinalized).where(GenreFinalized.group_id == group_id)).all()
+    return [r.genre for r in rows]
+
+
+def _maybe_advance_after_nominations(session: Session, group: Group):
+    parts = _participants_in_group(session, group.id)
+    total = len(parts)
+    if total == 0:
+        return
+    # If only one participant is in the group, auto-finalize their nominations (up to two) and skip voting
+    if total == 1:
+        # collect that participant's nominations
+        noms = session.exec(select(GenreNomination).where(GenreNomination.group_id == group.id)).all()
+        if noms:
+            # clear any existing finalized
+            for old in session.exec(select(GenreFinalized).where(GenreFinalized.group_id == group.id)).all():
+                session.delete(old)
+            # take up to two unique genres in a stable order by insertion id
+            seen: set[str] = set()
+            taken = 0
+            for n in sorted(noms, key=lambda x: x.id or 0):
+                if n.genre in seen:
+                    continue
+                session.add(GenreFinalized(group_id=group.id, genre=n.genre))
+                seen.add(n.genre)
+                taken += 1
+                if taken >= 2:
+                    break
+            group.phase = "movie_selection"
+            session.add(group)
+            session.commit()
+            return
+    # Multi-participant path: once everyone has nominated at least one, advance to voting
+    nominated = _count_distinct_nominees(session, group.id)
+    if nominated >= total and (session.exec(select(GenreNomination).where(GenreNomination.group_id == group.id)).first() is not None):
+        group.phase = "genre_voting"
+        session.add(group)
+        session.commit()
+
+
+def _maybe_finalize_after_votes(session: Session, group: Group):
+    parts = _participants_in_group(session, group.id)
+    total = len(parts)
+    if total == 0:
+        return
+    voted = _count_distinct_voters(session, group.id)
+    # Build vote tally
+    votes = session.exec(select(GenreVote).where(GenreVote.group_id == group.id)).all()
+    if voted >= total and votes:
+        tally = Counter()
+        for v in votes:
+            tally[v.genre] += (v.value or 0)
+        top2 = [g for g, _c in tally.most_common(2)]
+        if len(top2) >= 2:
+            # reset and store finalized genres
+            for old in session.exec(select(GenreFinalized).where(GenreFinalized.group_id == group.id)).all():
+                session.delete(old)
+            for gname in top2:
+                session.add(GenreFinalized(group_id=group.id, genre=gname))
+            group.phase = "movie_selection"
+            session.add(group)
+            session.commit()
+
+
+@app.get("/groups/{code}/progress")
+def group_progress(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    _require_member(session, group, token)
+    parts = _participants_in_group(session, group.id)
+    total = len(parts)
+    nominated = _count_distinct_nominees(session, group.id)
+    voted = _count_distinct_voters(session, group.id)
+    finalized = _finalized_genres(session, group.id)
+    return {
+        "phase": group.phase,
+        "total_participants": total,
+        "nominated_count": nominated,
+        "voted_count": voted,
+        "all_nominated": nominated >= total and total > 0,
+        "all_voted": voted >= total and total > 0,
+        "finalized_genres": finalized,
+    }

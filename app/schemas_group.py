@@ -13,6 +13,14 @@ class GroupJoinGuest(BaseModel):
     streaming_services: Optional[list[str]] = None
 
 
+class GenresNominateIn(BaseModel):
+    genres: List[str] = Field(min_length=1, max_length=2)
+
+
+class GenreVoteIn(BaseModel):
+    genre: str
+
+
 # ---- Response models ----
 class ParticipantOut(BaseModel):
     id: int

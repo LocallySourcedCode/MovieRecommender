@@ -1,28 +1,41 @@
 import React, { useState } from 'react'
 import { api } from '../api'
 import { useNavigate } from 'react-router-dom'
-import { getToken } from '../utils/storage'
+import { getToken, clearToken } from '../utils/storage'
+import { ServicesToggle } from '../components/ServicesToggle'
 
 export function JoinGroup() {
   const nav = useNavigate()
   const [code, setCode] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [servicesText, setServicesText] = useState('')
+  const [services, setServices] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-
-  function parseServices(input: string): string[] | undefined {
-    const arr = input.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-    return arr.length ? arr : undefined
-  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     try {
       const token = getToken()
-      const res = token
-        ? await api.joinGroupAsUser(code)
-        : await api.joinGroupGuest(code, displayName, parseServices(servicesText))
+      let res: any
+      if (token) {
+        try {
+          const who = await api.whoami()
+          if (who?.kind === 'participant') {
+            const ok = window.confirm('You are already in a group. Leave or disband it before joining another?')
+            if (!ok) return
+            await api.leaveCurrent()
+            clearToken()
+            res = await api.joinGroupGuest(code, displayName, services.length ? services : undefined)
+          } else {
+            res = await api.joinGroupAsUser(code)
+          }
+        } catch {
+          // token invalid -> treat as guest
+          res = await api.joinGroupGuest(code, displayName, services.length ? services : undefined)
+        }
+      } else {
+        res = await api.joinGroupGuest(code, displayName, services.length ? services : undefined)
+      }
       const gcode = res?.group?.code || code
       nav(`/g/${gcode}`)
     } catch (err: any) {
@@ -45,10 +58,7 @@ export function JoinGroup() {
                 Display name
                 <input value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="Your name" />
               </label>
-              <label>
-                Streaming services (comma separated, optional)
-                <input value={servicesText} onChange={e => setServicesText(e.target.value)} placeholder="netflix, hulu, amazon, hbo" />
-              </label>
+              <ServicesToggle value={services} onChange={setServices} />
             </>
           )}
           <button type="submit">Join</button>

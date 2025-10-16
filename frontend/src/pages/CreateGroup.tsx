@@ -1,16 +1,12 @@
 import React, { useState } from 'react'
 import { api } from '../api'
 import { useNavigate } from 'react-router-dom'
-
-function parseServices(input: string): string[] | undefined {
-  const arr = input.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-  return arr.length ? arr : undefined
-}
+import { ServicesToggle } from '../components/ServicesToggle'
 
 export function CreateGroup() {
   const nav = useNavigate()
   const [displayName, setDisplayName] = useState('')
-  const [servicesText, setServicesText] = useState('')
+  const [services, setServices] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -19,9 +15,21 @@ export function CreateGroup() {
     setError(null)
     setCreating(true)
     try {
-      const res = await api.createGroupGuest(displayName, parseServices(servicesText))
+      // If currently holding a participant token, prompt to leave/disband first
+      try {
+        const who = await api.whoami()
+        if (who?.kind === 'participant') {
+          const ok = window.confirm('You are already in a group. Leave or disband it to create a new one?')
+          if (!ok) { setCreating(false); return }
+          await api.leaveCurrent()
+          // token will be invalid after leaving; api.createGroupGuest skips auth anyway
+        }
+      } catch {
+        // not signed in or invalid token -> ignore
+      }
+      const res = await api.createGroupGuest(displayName, services.length ? services : undefined)
       const code = res?.group?.code
-      if (code) nav(`/g/${code}`)
+      if (code) nav(`/g/${code}/nominate-genres`)
     } catch (err: any) {
       setError(err?.message || 'Failed to create group')
     } finally {
@@ -38,10 +46,7 @@ export function CreateGroup() {
             Display name (for guests)
             <input value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="Your name" />
           </label>
-          <label>
-            Streaming services (comma separated, optional)
-            <input value={servicesText} onChange={e => setServicesText(e.target.value)} placeholder="netflix, hulu, amazon, hbo" />
-          </label>
+          <ServicesToggle value={services} onChange={setServices} />
           <button type="submit" disabled={creating}>Create Group</button>
         </div>
       </form>

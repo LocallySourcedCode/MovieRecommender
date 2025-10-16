@@ -7,6 +7,7 @@ vi.mock('../api', () => {
   const vote = vi.fn().mockResolvedValue({ status: 'pending' })
   return { api: { currentMovie: current, voteMovie: vote } }
 })
+import { api } from '../api'
 
 describe('Swipe component', () => {
   beforeEach(() => {
@@ -25,5 +26,17 @@ describe('Swipe component', () => {
     fireEvent.click(screen.getByText('Yes'))
     const pending = await screen.findByText(/Waiting for others/)
     expect(pending).toBeInTheDocument()
+  })
+
+  it('shows error and Retry when loading current movie fails', async () => {
+    ;(api.currentMovie as any).mockRejectedValueOnce(new Error('No more candidates'))
+    render(<Swipe code="ERR123" />)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/No more candidates|Failed to load/)
+    // Next call succeeds
+    ;(api.currentMovie as any).mockResolvedValueOnce({ status: 'current', candidate: { id: 5, title: 'Parasite' } })
+    fireEvent.click(screen.getByText('Retry'))
+    const title = await screen.findByText(/Parasite/)
+    expect(title).toBeInTheDocument()
   })
 })

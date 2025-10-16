@@ -90,3 +90,10 @@ class MovieVote(SQLModel, table=True):
     participant_id: int = Field(foreign_key="participant.id", index=True)
     movie_id: int = Field(foreign_key="moviecandidate.id", index=True)
     value: int = Field(default=1)
+
+
+class GenreFinalized(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("group_id", "genre"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    group_id: int = Field(foreign_key="group.id", index=True)
+    genre: str = Field(index=True)

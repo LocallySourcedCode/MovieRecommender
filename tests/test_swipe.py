@@ -13,7 +13,20 @@ def make_group_with_two_guests(client):
     return code, token1, token2
 
 
-def test_current_candidate_and_finalize_accept(test_client):
+from app import main as app_main
+
+
+def test_current_candidate_and_finalize_accept(test_client, monkeypatch):
+    # Stub single-pick recommender so /movies/current works pre-finalization in offline tests
+    seq = {"i": 0}
+    def fake_next(used_titles, shared_providers=None, genres=None):
+        seq["i"] += 1
+        t = f"S{seq['i']}"
+        if t in (used_titles or set()):
+            return None
+        return {"title": t, "year": 2000 + seq["i"], "description": t, "poster_url": None, "providers": [], "reason": "tmdb:unrestricted", "source": "tmdb"}
+    monkeypatch.setattr(app_main, "get_next_candidate", fake_next, raising=False)
+
     code, t1, t2 = make_group_with_two_guests(test_client)
 
     cur = test_client.get(f"/groups/{code}/movies/current", headers=auth_header(t1))
@@ -34,9 +47,19 @@ def test_current_candidate_and_finalize_accept(test_client):
     assert body["winner"]["title"] == cand["title"]
 
 
-def test_reject_moves_to_next_candidate(test_client):
+def test_reject_moves_to_next_candidate(test_client, monkeypatch):
+    seq = {"i": 0}
+    def fake_next(used_titles, shared_providers=None, genres=None):
+        seq["i"] += 1
+        t = f"R{seq['i']}"
+        if t in (used_titles or set()):
+            return None
+        return {"title": t, "year": 1990 + seq["i"], "description": t, "poster_url": None, "providers": [], "reason": "tmdb:unrestricted", "source": "tmdb"}
+    monkeypatch.setattr(app_main, "get_next_candidate", fake_next, raising=False)
+
     code, t1, t2 = make_group_with_two_guests(test_client)
     cur = test_client.get(f"/groups/{code}/movies/current", headers=auth_header(t1))
+    assert cur.status_code == 200
     cand1 = cur.json()["candidate"]
 
     # Both reject -> should move to next candidate and return new current

@@ -2,14 +2,24 @@ import { getToken, setToken } from './utils/storage'
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
-async function request(path: string, opts: RequestInit = {}) {
+type RequestOpts = RequestInit & { skipAuth?: boolean }
+
+async function request(path: string, opts: RequestOpts = {}) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const token = getToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers: { ...headers, ...(opts.headers || {}) } })
+  if (token && !opts.skipAuth) headers['Authorization'] = `Bearer ${token}`
+  const { skipAuth, ...rest } = opts
+  const res = await fetch(`${API_BASE}${path}`, { ...rest, headers: { ...headers, ...(opts.headers || {}) } })
   if (!res.ok) {
+    // Try to parse JSON error bodies and surface a friendly message
+    try {
+      const data = await res.json()
+      const detail = (data && data.detail) || data
+      if (typeof detail === 'string') throw new Error(detail)
+      if (detail && typeof detail.message === 'string') throw new Error(detail.message)
+    } catch {}
     const msg = await safeText(res)
-    throw new Error(`${res.status} ${msg}`)
+    throw new Error(msg || `${res.status} Error`)
   }
   return res.status === 204 ? null : res.json()
 }
@@ -34,7 +44,7 @@ export const api = {
     return request('/whoami')
   },
   async createGroupGuest(display_name: string, streaming_services?: string[]) {
-    const data = await request('/groups', { method: 'POST', body: JSON.stringify({ display_name, streaming_services }) })
+    const data = await request('/groups', { method: 'POST', body: JSON.stringify({ display_name, streaming_services }), skipAuth: true })
     if (data?.access_token) setToken(data.access_token)
     return data
   },
@@ -42,7 +52,7 @@ export const api = {
     return request('/groups', { method: 'POST' })
   },
   async joinGroupGuest(code: string, display_name: string, streaming_services?: string[]) {
-    const data = await request(`/groups/${code}/join`, { method: 'POST', body: JSON.stringify({ display_name, streaming_services }) })
+    const data = await request(`/groups/${code}/join`, { method: 'POST', body: JSON.stringify({ display_name, streaming_services }), skipAuth: true })
     if (data?.access_token) setToken(data.access_token)
     return data
   },
@@ -58,4 +68,38 @@ export const api = {
   async useVeto(code: string) {
     return request(`/groups/${code}/veto/use`, { method: 'POST' })
   },
+  async leaveCurrent() {
+    return request(`/groups/leave`, { method: 'POST' })
+  },
+  async leaveCurrentKeepAlive() {
+    const token = getToken()
+    if (!token) return
+    try {
+      await fetch(`${API_BASE}/groups/leave`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        keepalive: true,
+      })
+    } catch {
+      // best-effort
+    }
+  },
+  async getGenreNominations(code: string) {
+    return request(`/groups/${code}/genres/nominations`)
+  },
+  async nominateGenres(code: string, genres: string[]) {
+    return request(`/groups/${code}/genres/nominate`, { method: 'POST', body: JSON.stringify({ genres }) })
+  },
+  async getGenreStandings(code: string) {
+    return request(`/groups/${code}/genres/standings`)
+  },
+  async voteGenre(code: string, genre: string) {
+    return request(`/groups/${code}/genres/vote`, { method: 'POST', body: JSON.stringify({ genre }) })
+  },
+  async resetGenres(code: string) {
+    return request(`/groups/${code}/genres/reset`, { method: 'POST' })
+  },
+  async getProgress(code: string) {
+    return request(`/groups/${code}/progress`)
+  }
 }

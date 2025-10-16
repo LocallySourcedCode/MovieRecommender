@@ -17,7 +17,19 @@ def make_group_with_two_guests(client):
     return code, token1, token2
 
 
-def test_veto_requires_enabled(test_client):
+from app import main as app_main
+
+def test_veto_requires_enabled(test_client, monkeypatch):
+    # Stub single-pick so current candidate exists pre-finalization
+    seq = {"i": 0}
+    def fake_next(used_titles, shared_providers=None, genres=None):
+        seq["i"] += 1
+        t = f"V{seq['i']}"
+        if t in (used_titles or set()):
+            return None
+        return {"title": t, "year": 2000 + seq["i"], "description": t, "poster_url": None, "providers": [], "reason": "tmdb:unrestricted", "source": "tmdb"}
+    monkeypatch.setattr(app_main, "get_next_candidate", fake_next, raising=False)
+
     code, t1, _ = make_group_with_two_guests(test_client)
     # Create a current candidate
     cur = test_client.get(f"/groups/{code}/movies/current", headers=auth_header(t1))
@@ -28,7 +40,16 @@ def test_veto_requires_enabled(test_client):
     assert v.status_code == 409
 
 
-def test_veto_disqualifies_and_advances_once(test_client, db_session):
+def test_veto_disqualifies_and_advances_once(test_client, db_session, monkeypatch):
+    seq = {"i": 0}
+    def fake_next(used_titles, shared_providers=None, genres=None):
+        seq["i"] += 1
+        t = f"W{seq['i']}"
+        if t in (used_titles or set()):
+            return None
+        return {"title": t, "year": 1990 + seq["i"], "description": t, "poster_url": None, "providers": [], "reason": "tmdb:unrestricted", "source": "tmdb"}
+    monkeypatch.setattr(app_main, "get_next_candidate", fake_next, raising=False)
+
     code, t1, t2 = make_group_with_two_guests(test_client)
 
     # Enable veto mode directly in DB for this test
@@ -38,6 +59,7 @@ def test_veto_disqualifies_and_advances_once(test_client, db_session):
     db_session.commit()
 
     cur = test_client.get(f"/groups/{code}/movies/current", headers=auth_header(t1))
+    assert cur.status_code == 200
     cand1 = cur.json()["candidate"]
 
     # Use veto -> should advance to next

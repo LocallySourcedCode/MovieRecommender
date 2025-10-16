@@ -37,3 +37,13 @@ def test_client(test_engine):
 def db_session(test_engine):
     with Session(test_engine) as session:
         yield session
+
+
+@pytest.fixture(autouse=True)
+def _tmdb_env_off(monkeypatch):
+    """Disable TMDb by default for deterministic offline tests. Tests that need TMDb must enable it explicitly."""
+    monkeypatch.delenv("TMDB_READ_TOKEN", raising=False)
+    monkeypatch.delenv("TMDB_API_KEY", raising=False)
+
+
+

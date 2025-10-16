@@ -1,30 +1,26 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { GroupLobby } from '../pages/GroupLobby'
 
 vi.mock('../api', () => ({
   api: {
-    useVeto: vi.fn().mockResolvedValue({ status: 'current', candidate: { id: 2, title: 'Parasite' } })
+    // On load, GroupLobby queries progress and redirects based on phase
+    getProgress: vi.fn().mockResolvedValue({ phase: 'genre_nomination' })
   }
 }))
 
-vi.mock('../components/Swipe', () => ({
-  Swipe: ({ code }: { code: string }) => <div>SWIPE AREA {code}</div>
-}))
-
 describe('GroupLobby page', () => {
-  it('renders with code and can call veto', async () => {
+  it('redirects to nomination page based on progress phase', async () => {
     render(
       <MemoryRouter initialEntries={["/g/ABC123"]}>
         <Routes>
           <Route path="/g/:code" element={<GroupLobby />} />
+          <Route path="/g/:code/nominate-genres" element={<div>NOMINATE PAGE</div>} />
         </Routes>
       </MemoryRouter>
     )
-    expect(screen.getByText('Group Lobby (ABC123)')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('Use Veto'))
-    const msg = await screen.findByText(/vetoed/i)
-    expect(msg).toBeInTheDocument()
+    const el = await screen.findByText('NOMINATE PAGE')
+    expect(el).toBeInTheDocument()
   })
 })
