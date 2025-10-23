@@ -46,6 +46,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Deployment
+deploy_package/
+backend.log
+
 # Misc
 *.swp
 *.swo
