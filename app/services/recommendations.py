@@ -1,4 +1,6 @@
-from typing import List, Dict, Optional, Set
+import httpx
+import os
+from typing import List, Dict, Optional, Set, Union
 
 # Demo catalog for offline development. In production, swap to TMDb via a feature flag.
 # Each item includes: title, year, description, poster_url, providers (list[str]), rotten_tomatoes (0-100)
@@ -81,9 +83,6 @@ def get_next_demo_candidate(
 # Optionally, if TMDB_READ_TOKEN (v4) or TMDB_API_KEY (v3) is set in the environment, we will fetch
 # candidates from TMDb and map them into the same structure. On any error, we fall back to the demo data.
 
-from typing import List, Dict, Optional, Set
-import os
-import httpx
 
 # Demo catalog for offline development. In production, swap to TMDb via a feature flag.
 # Each item includes: title, year, description, poster_url, providers (list[str]), rotten_tomatoes (0-100)
@@ -156,6 +155,7 @@ _TITLE_GENRES: dict[str, list[str]] = {
     "Spider-Man: Into the Spider-Verse": ["Animation", "Action"],
 }
 
+
 def _matches_genres(title: str, allowed: Optional[Set[str]]) -> bool:
     if not allowed:
         return True
@@ -208,7 +208,8 @@ _PROVIDER_NORMALIZATION = {
 _PAGE_CACHE: dict[int, list[dict]] = {}
 _PROVIDER_CACHE: dict[tuple[int, str], list[str]] = {}
 # Discover cache keyed by (genres_key, providers_key, page, region, monetization, sort_by, vote_count_gte)
-_DISCOVER_CACHE: dict[tuple[str, str, int, str, str, str, int], list[dict]] = {}
+_DISCOVER_CACHE: dict[tuple[str, str, int,
+                            str, str, str, int], list[dict]] = {}
 
 
 def _tmdb_is_configured() -> bool:
@@ -238,6 +239,7 @@ def _normalize_provider_names(raw_names: list[str]) -> list[str]:
             out.append(key)
     return out
 
+
 # Map our normalized provider keys to TMDb provider IDs
 # References (subject to change by TMDb): Netflix=8, Hulu=15, Amazon Prime Video=119, HBO Max/Max=1899 (older HBO Max=384)
 _PROVIDER_ID_MAP: dict[str, list[int]] = {
@@ -264,7 +266,8 @@ def _fetch_popular_page(page: int) -> list[dict]:
         return _PAGE_CACHE[page]
     url = f"{_TMDb_BASE}/movie/popular"
     with httpx.Client(timeout=7.0) as client:
-        r = client.get(url, headers=_tmdb_headers(), params={"language": "en-US", "page": page, **_tmdb_params()})
+        r = client.get(url, headers=_tmdb_headers(), params={
+                       "language": "en-US", "page": page, **_tmdb_params()})
         r.raise_for_status()
         data = r.json()
     results = data.get("results", []) if isinstance(data, dict) else []
@@ -307,7 +310,8 @@ def _discover_page(genres_ids: Optional[tuple[int, ...]], provider_ids: Optional
     """
     genres_key = ",".join(str(i) for i in genres_ids) if genres_ids else "-"
     prov_key = ",".join(str(i) for i in provider_ids) if provider_ids else "-"
-    cache_key = (genres_key, prov_key, page, _TMDb_REGION, monetization, sort_by, vote_count_gte)
+    cache_key = (genres_key, prov_key, page, _TMDb_REGION,
+                 monetization, sort_by, vote_count_gte)
     if cache_key in _DISCOVER_CACHE:
         return _DISCOVER_CACHE[cache_key]
     params: dict = {
@@ -357,7 +361,7 @@ def _tmdb_map_item(movie: dict, providers: Optional[list[str]] = None) -> dict:
     return item
 
 
-def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[Set[str]], genres: Optional[list[str] | Set[str]] = None) -> Optional[Dict]:
+def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[Set[str]], genres: Optional[Union[list[str], Set[str]]] = None) -> Optional[Dict]:
     """Return next TMDb candidate with tiered genre priority and rating sort.
 
     Priority when finalized genres are provided (ordered: most-voted first):
@@ -393,9 +397,11 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
         try:
             if isinstance(genres, set):
                 # sets do not preserve order; keep arbitrary but stable order
-                genres_ordered = sorted([g for g in genres if isinstance(g, str)])
+                genres_ordered = sorted(
+                    [g for g in genres if isinstance(g, str)])
             else:
-                genres_ordered = [g for g in list(genres) if isinstance(g, str)]
+                genres_ordered = [g for g in list(
+                    genres) if isinstance(g, str)]
         except Exception:
             genres_ordered = []
 
@@ -416,6 +422,7 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
     # First attempt: TMDb Discover API (broader than Popular) with paging and optional provider prefilter
     try:
         prov_ids = _provider_ids_for(shared_providers)
+
         def _score(movie: dict) -> tuple[float, int, float]:
             return (
                 float(movie.get("vote_average") or 0.0),
@@ -423,6 +430,7 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
                 float(movie.get("popularity") or 0.0),
             )
         # Helper to select best from discover over up to 10 pages
+
         def _discover_pick(gen_ids: Optional[list[int]], tier: str) -> Optional[Dict]:
             best_item: Optional[Dict] = None
             best_score = (-1.0, -1, -1.0)
@@ -430,7 +438,8 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
             prov_tuple = tuple(prov_ids) if prov_ids else None
             for page in range(1, 11):
                 for movie in _discover_page(ids_tuple, prov_tuple, page):
-                    title = (movie.get("title") or movie.get("name") or "").strip()
+                    title = (movie.get("title") or movie.get(
+                        "name") or "").strip()
                     if not title or title in used_titles:
                         continue
                     # Enforce our top-2 rules for tiers when genres provided
@@ -444,7 +453,8 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
                     ok = True
                     if sel_ids:
                         if tier == "both" and len(sel_ids) == 2:
-                            ok = (sel_ids[0] in ids_set and sel_ids[1] in ids_set) and bool(top2_set.intersection({sel_ids[0], sel_ids[1]}))
+                            ok = (sel_ids[0] in ids_set and sel_ids[1] in ids_set) and bool(
+                                top2_set.intersection({sel_ids[0], sel_ids[1]}))
                         elif tier == "primary" and len(sel_ids) >= 1:
                             ok = sel_ids[0] in top2_set
                         elif tier == "secondary" and len(sel_ids) == 2:
@@ -454,7 +464,8 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
                     sc = _score(movie)
                     if sc > best_score:
                         best_score = sc
-                        mapped = _tmdb_map_item(movie, providers=list(shared_providers) if shared_providers else None)
+                        mapped = _tmdb_map_item(movie, providers=list(
+                            shared_providers) if shared_providers else None)
                         mapped["reason"] = f"tmdb:tier={tier if sel_ids else 'unrestricted'}"
                         best_item = mapped
             return best_item
@@ -492,13 +503,15 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
                 # Provider intersection if required
                 providers: Optional[list[str]] = None
                 if shared_providers:
-                    provs = _fetch_movie_providers(int(movie.get("id")), _TMDb_REGION)
+                    provs = _fetch_movie_providers(
+                        int(movie.get("id")), _TMDb_REGION)
                     if not set(provs).intersection(shared_providers):
                         continue
                     providers = provs
                 # If no genre constraints, collect unrestricted and continue
                 if not sel_ids:
-                    unrestricted.append({"movie": movie, "providers": providers})
+                    unrestricted.append(
+                        {"movie": movie, "providers": providers})
                     continue
                 ids = movie.get("genre_ids") or []
                 try:
@@ -511,7 +524,8 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
                 # Determine tier membership
                 if len(sel_ids) == 2:
                     both_present_anywhere = sel_ids[0] in ids_set and sel_ids[1] in ids_set
-                    at_least_one_in_top2 = bool(top2_set.intersection({sel_ids[0], sel_ids[1]}))
+                    at_least_one_in_top2 = bool(
+                        top2_set.intersection({sel_ids[0], sel_ids[1]}))
                     if both_present_anywhere and at_least_one_in_top2:
                         both.append({"movie": movie, "providers": providers})
                         continue
@@ -524,9 +538,11 @@ def _get_next_tmdb_candidate(used_titles: Set[str], shared_providers: Optional[S
                     secondary.append({"movie": movie, "providers": providers})
                     continue
         # Helper to pick highest rated from a bucket
+
         def pick_best(bucket: list[dict]) -> Optional[Dict]:
             if not bucket:
                 return None
+
             def score(entry: dict):
                 m = entry["movie"]
                 return (
@@ -579,15 +595,18 @@ def get_next_candidate(
     """
     if _tmdb_is_configured():
         # Apply strict top-2 TMDb genre filtering when genres are provided
-        item = _get_next_tmdb_candidate(used_titles=used_titles, shared_providers=shared_providers, genres=genres)
+        item = _get_next_tmdb_candidate(
+            used_titles=used_titles, shared_providers=shared_providers, genres=genres)
         if item:
             return item
         # Try unrestricted TMDb pick with same used/shared filters
-        item = _get_next_tmdb_candidate(used_titles=used_titles, shared_providers=shared_providers, genres=None)
+        item = _get_next_tmdb_candidate(
+            used_titles=used_titles, shared_providers=shared_providers, genres=None)
         if item:
             return item
         # Last-chance within TMDb: ignore used/providers/genres entirely
-        item = _get_next_tmdb_candidate(used_titles=set(), shared_providers=None, genres=None)
+        item = _get_next_tmdb_candidate(
+            used_titles=set(), shared_providers=None, genres=None)
         if item:
             return item
     # No TMDb candidate found or TMDb not configured
@@ -595,7 +614,7 @@ def get_next_candidate(
 
 
 def get_candidate_queue(
-    genres: Optional[list[str] | Set[str]],
+    genres: Optional[Union[list[str], Set[str]]],
     shared_providers: Optional[Set[str]] = None,
     target_size: int = 100,
 ) -> list[Dict]:
@@ -635,7 +654,8 @@ def get_candidate_queue(
     ordered: list[str] = []
     if genres:
         try:
-            ordered = list(genres) if isinstance(genres, list) else sorted(list(genres))
+            ordered = list(genres) if isinstance(
+                genres, list) else sorted(list(genres))
         except Exception:
             ordered = []
     sel_ids = [TMDB_GENRE_IDS[g] for g in ordered if g in TMDB_GENRE_IDS][:2]
@@ -677,7 +697,8 @@ def get_candidate_queue(
         # First with provider filter
         for page in range(1, 21):  # up to 20 pages to widen coverage ~400 results window
             movies = _discover_page(tuple(gen_ids) if gen_ids else None,
-                                    tuple(prov_ids_pref) if prov_ids_pref else None,
+                                    tuple(
+                                        prov_ids_pref) if prov_ids_pref else None,
                                     page,
                                     vote_count_gte=100,
                                     sort_by="vote_average.desc")
@@ -698,7 +719,8 @@ def get_candidate_queue(
                 ok = True
                 if len(sel_ids) == 2:
                     if tier == "both":
-                        ok = (sel_ids[0] in ids_set and sel_ids[1] in ids_set) and bool(top2_set.intersection({sel_ids[0], sel_ids[1]}))
+                        ok = (sel_ids[0] in ids_set and sel_ids[1] in ids_set) and bool(
+                            top2_set.intersection({sel_ids[0], sel_ids[1]}))
                     elif tier == "primary":
                         ok = sel_ids[0] in top2_set
                     elif tier == "secondary":
@@ -723,7 +745,8 @@ def get_candidate_queue(
                 if not movies:
                     break
                 for movie in movies:
-                    title = (movie.get("title") or movie.get("name") or "").strip()
+                    title = (movie.get("title") or movie.get(
+                        "name") or "").strip()
                     if not title or title in seen_titles or movie in picked:
                         continue
                     ids_list = movie.get("genre_ids") or []
@@ -736,7 +759,8 @@ def get_candidate_queue(
                     ok = True
                     if len(sel_ids) == 2:
                         if tier == "both":
-                            ok = (sel_ids[0] in ids_set and sel_ids[1] in ids_set) and bool(top2_set.intersection({sel_ids[0], sel_ids[1]}))
+                            ok = (sel_ids[0] in ids_set and sel_ids[1] in ids_set) and bool(
+                                top2_set.intersection({sel_ids[0], sel_ids[1]}))
                         elif tier == "primary":
                             ok = sel_ids[0] in top2_set
                         elif tier == "secondary":
@@ -768,26 +792,32 @@ def get_candidate_queue(
         prim_needed = half
         sec_needed = remaining - half
         # Primary-only
-        prim_movies = collect_discover([sel_ids[0]], prim_needed, "primary", prov_ids)
+        prim_movies = collect_discover(
+            [sel_ids[0]], prim_needed, "primary", prov_ids)
         add_items(prim_movies, "primary")
         # Secondary-only
-        sec_movies = collect_discover([sel_ids[1]], sec_needed, "secondary", prov_ids)
+        sec_movies = collect_discover(
+            [sel_ids[1]], sec_needed, "secondary", prov_ids)
         add_items(sec_movies, "secondary")
     elif len(sel_ids) == 1 and remaining > 0:
-        prim_movies = collect_discover([sel_ids[0]], remaining, "primary", prov_ids)
+        prim_movies = collect_discover(
+            [sel_ids[0]], remaining, "primary", prov_ids)
         add_items(prim_movies, "primary")
     elif remaining > 0:
         # No genres provided: unrestricted by rating (provider-pref then relaxed)
-        any_movies = collect_discover(None, remaining, "unrestricted", prov_ids)
+        any_movies = collect_discover(
+            None, remaining, "unrestricted", prov_ids)
         add_items(any_movies, "unrestricted")
 
     # Ensure “Scary Movie” franchise inclusion for Comedy + (Thriller or Horror)
     try:
         from urllib.parse import quote
+
         def _search_titles(query: str) -> list[dict]:
             url = f"{_TMDb_BASE}/search/movie"
             with httpx.Client(timeout=7.0) as client:
-                r = client.get(url, headers=_tmdb_headers(), params={"query": query, **_tmdb_params()})
+                r = client.get(url, headers=_tmdb_headers(), params={
+                               "query": query, **_tmdb_params()})
                 r.raise_for_status()
                 data = r.json()
             return data.get("results", []) if isinstance(data, dict) else []
@@ -795,7 +825,8 @@ def get_candidate_queue(
         if "comedy" in genres_lower and ("thriller" in genres_lower or "horror" in genres_lower):
             scary = _search_titles("Scary Movie")
             # Prepend any missing Scary Movie titles
-            scary_sorted = sorted(scary, key=lambda m: (m.get("release_date") or ""))
+            scary_sorted = sorted(scary, key=lambda m: (
+                m.get("release_date") or ""))
             prepend: list[Dict] = []
             for m in scary_sorted:
                 t = (m.get("title") or m.get("name") or "").strip()
