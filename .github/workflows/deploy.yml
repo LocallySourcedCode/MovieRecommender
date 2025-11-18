@@ -1,0 +1,95 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Prepare deployment files
+        run: |
+          mkdir -p deploy_package
+          cp -r app deploy_package/
+          cp -r frontend/dist deploy_package/frontend-dist
+          cp requirements.txt deploy_package/
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem
+          chmod 600 ~/.ssh/deploy_key.pem
+          ssh-keyscan -H ec2-13-59-13-187.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          # Create deployment directory on EC2
+          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com "mkdir -p ~/MovieRecommender-Henry"
+
+          # Transfer files
+          rsync -avz --delete -e "ssh -i ~/.ssh/deploy_key.pem" \
+            deploy_package/ \
+            ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com:~/MovieRecommender-Henry/
+
+      - name: Install dependencies and restart services
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com << 'EOF'
+            cd ~/MovieRecommender-Henry
+            
+            # Install Python dependencies if venv doesn't exist or requirements changed
+            if [ ! -d ".venv" ]; then
+              python3 -m venv .venv
+            fi
+            source .venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            
+            # Stop existing backend process on port 8001 (if running)
+            pkill -f "uvicorn app.main:app.*8001" || true
+            
+            # Start backend in background on port 8001
+            nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 > backend.log 2>&1 &
+            
+            echo "Deployment complete!"
+            echo "Backend running on port 8001"
+          EOF
+
+      - name: Verify deployment
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com << 'EOF'
+            cd ~/MovieRecommender-Henry
+            
+            # Check if backend process is running
+            if pgrep -f "uvicorn app.main:app.*8001" > /dev/null; then
+              echo "✅ Backend is running on port 8001"
+              ps aux | grep "uvicorn app.main:app" | grep -v grep
+            else
+              echo "❌ Backend failed to start"
+              tail -n 50 backend.log
+              exit 1
+            fi
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/deploy_key.pem
