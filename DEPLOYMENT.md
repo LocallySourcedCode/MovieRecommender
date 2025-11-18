@@ -7,7 +7,7 @@
 1. **EC2 Instance Requirements**
    - Python 3.11+ installed
    - Node.js 22+ installed (if serving frontend from EC2)
-   - Security group allows inbound traffic on port 8001
+   - Security group allows inbound HTTP (80) and SSH (22). HTTPS (443) optional.
    - SSH access configured
 
 2. **GitHub Secrets Configuration**
@@ -26,19 +26,18 @@ The workflow automatically deploys on every push to `master` branch.
 1. Builds the React frontend (`frontend/dist`)
 2. Transfers files to EC2 via SSH/rsync
 3. Installs Python dependencies in a virtual environment
-4. Restarts the FastAPI backend on port 8001
+4. Restarts the systemd service `movierec` (Uvicorn on 127.0.0.1:8000 behind Nginx)
 
 **Deployment location on EC2:**
 ```
-~/MovieRecommender-Henry/
+/home/ec2-user/movierec/movierec
 ├── app/                    # FastAPI backend
 ├── frontend-dist/          # Built React frontend
 ├── requirements.txt
-├── .venv/                  # Python virtual environment
-└── backend.log             # Backend logs
+└── .venv/                  # Python virtual environment (managed by workflow)
 ```
 
-**Backend runs on:** `http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001`
+**Backend runs on:** `http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/` (via Nginx → Uvicorn:8000)
 
 ### Manual Deployment
 
@@ -81,28 +80,22 @@ npm --version
 **Check backend status:**
 ```bash
 ssh -i ~/.ssh/movie-recommender-ec2.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com
-cd ~/MovieRecommender-Henry
-ps aux | grep uvicorn
+sudo systemctl status --no-pager movierec
 ```
 
 **View backend logs:**
 ```bash
-tail -f ~/MovieRecommender-Henry/backend.log
+sudo journalctl -u movierec -f --no-pager
 ```
 
 **Restart backend manually:**
 ```bash
-cd ~/MovieRecommender-Henry
-pkill -f "uvicorn app.main:app.*8001"
-source .venv/bin/activate
-nohup uvicorn app.main:app --host 0.0.0.0 --port 8001 > backend.log 2>&1 &
+sudo systemctl restart movierec
 ```
 
-**Check if port 8001 is listening:**
+**Check if Uvicorn port 8000 is listening (optional):**
 ```bash
-sudo netstat -tlnp | grep 8001
-# or
-sudo lsof -i :8001
+sudo lsof -i :8000 || ss -tlnp | grep 8000 || true
 ```
 
 ### Security Group Configuration
@@ -112,7 +105,8 @@ Ensure your EC2 security group allows:
 | Type | Protocol | Port | Source |
 |------|----------|------|--------|
 | SSH | TCP | 22 | Your IP |
-| Custom TCP | TCP | 8001 | 0.0.0.0/0 (or specific IPs) |
+| HTTP | TCP | 80 | 0.0.0.0/0 (or specific IPs) |
+| HTTPS (optional) | TCP | 443 | 0.0.0.0/0 (or specific IPs) |
 
 ### Environment Variables
 
@@ -122,8 +116,8 @@ If your app needs environment variables (e.g., `TMDB_API_KEY`), add them to the 
 # SSH into EC2
 ssh -i ~/.ssh/movie-recommender-ec2.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com
 
-# Create .env file
-cd ~/MovieRecommender-Henry
+# Create .env file in the service directory
+cd /home/ec2-user/movierec/movierec
 cat > .env << 'EOF'
 TMDB_READ_TOKEN=your_token_here
 TMDB_REGION=US
@@ -156,23 +150,24 @@ For a production setup, consider:
    - Health check endpoints
    - Uptime monitoring
 
-### Example systemd Service (Optional)
+### Example systemd Service (for reference)
 
-Create `/etc/systemd/system/movie-recommender.service`:
+Create `/etc/systemd/system/movierec.service`:
 
 ```ini
 [Unit]
-Description=MovieRecommender FastAPI Backend
+Description=MovieRecommender FastAPI (Uvicorn)
 After=network.target
 
 [Service]
-Type=simple
 User=ec2-user
-WorkingDirectory=/home/ec2-user/MovieRecommender-Henry
-Environment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin"
-ExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001
+WorkingDirectory=/home/ec2-user/movierec/movierec
+Environment="PATH=/home/ec2-user/movierec/movierec/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/ec2-user/movierec/movierec/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
-RestartSec=10
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -181,21 +176,20 @@ WantedBy=multi-user.target
 Enable and start:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable movie-recommender
-sudo systemctl start movie-recommender
-sudo systemctl status movie-recommender
+sudo systemctl enable movierec --now
+sudo systemctl status movierec
 ```
 
 ### URLs
 
-- **API Base:** http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001
-- **API Docs:** http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/docs
-- **Health Check:** http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/config
+- **API Base:** http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com
+- **API Docs:** http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/docs
+- **Health Check:** http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/config
 
 ### Support
 
 For issues:
 1. Check GitHub Actions logs in the `Actions` tab
-2. SSH into EC2 and check `backend.log`
+2. SSH into EC2 and check `sudo journalctl -u movierec --since '10 minutes ago'`
 3. Verify security group rules
 4. Ensure `.pem` key is added to GitHub Secrets correctly

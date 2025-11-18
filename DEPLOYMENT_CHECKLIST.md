@@ -15,9 +15,10 @@
   python3.11 --version
   ```
 
-- [ ] Verify security group allows port 8001
+- [ ] Verify security group allows HTTP (80) and SSH (22)
   - AWS Console → EC2 → Security Groups
-  - Add inbound rule: TCP port 8001 from 0.0.0.0/0 (or specific IPs)
+  - Add inbound rule: TCP port 80 from 0.0.0.0/0 (or specific IPs)
+  - Ensure SSH port 22 is allowed from your IP
 
 - [ ] (Optional) Set up environment variables on EC2
   ```bash
@@ -54,7 +55,7 @@
 
 - [ ] Verify deployment succeeded
   - Check workflow status (green checkmark)
-  - Visit: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/docs
+  - Visit: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/docs
 
 ### Method 2: Manual (Local Script)
 - [ ] Ensure SSH key is in place
@@ -70,29 +71,29 @@
 
 - [ ] Verify deployment
   - Script will show status at the end
-  - Visit: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/docs
+  - Visit: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/docs
 
 ## Post-Deployment Verification
 
 - [ ] API is accessible
   ```bash
-  curl http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/config
+  curl http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/config
   ```
 
-- [ ] Backend process is running
+- [ ] Backend service is running (systemd)
   ```bash
   ssh -i your-key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com
-  ps aux | grep uvicorn
+  sudo systemctl status --no-pager movierec
   ```
 
 - [ ] Check backend logs for errors
   ```bash
   ssh -i your-key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com
-  tail -f ~/MovieRecommender-Henry/backend.log
+  sudo journalctl -u movierec --since '10 minutes ago' --no-pager
   ```
 
 - [ ] Test API endpoints
-  - Visit: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/docs
+  - Visit: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/docs
   - Try: `/config`, `/auth/register`, etc.
 
 ## Troubleshooting
@@ -105,22 +106,22 @@
 ### Backend not starting
 - [ ] SSH into EC2 and check logs
   ```bash
-  tail -n 100 ~/MovieRecommender-Henry/backend.log
+  sudo journalctl -u movierec --since '10 minutes ago' --no-pager
   ```
 - [ ] Verify Python dependencies installed
   ```bash
-  source ~/MovieRecommender-Henry/.venv/bin/activate
+  source /home/ec2-user/movierec/movierec/.venv/bin/activate
   pip list
   ```
-- [ ] Check if port 8001 is already in use
+- [ ] Check if port 8000 is listening (optional)
   ```bash
-  sudo lsof -i :8001
+  sudo lsof -i :8000 || ss -tlnp | grep 8000 || true
   ```
 
 ### Cannot access API from browser
-- [ ] Verify security group allows inbound TCP 8001
-- [ ] Check if backend is running: `ps aux | grep uvicorn`
-- [ ] Test locally on EC2: `curl localhost:8001/config`
+- [ ] Verify security group allows inbound HTTP 80
+- [ ] Check if service is running: `sudo systemctl status movierec`
+- [ ] Test locally on EC2: `curl localhost/config`
 
 ## Files Created
 
@@ -139,14 +140,14 @@ ssh -i ~/.ssh/movie-recommender-ec2.pem ec2-user@ec2-13-59-13-187.us-east-2.comp
 
 # View backend logs
 ssh -i ~/.ssh/movie-recommender-ec2.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com \
-  "tail -f ~/MovieRecommender-Henry/backend.log"
+  "sudo journalctl -u movierec -f --no-pager"
 
 # Restart backend manually
 ssh -i ~/.ssh/movie-recommender-ec2.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com \
-  "cd ~/MovieRecommender-Henry && pkill -f 'uvicorn.*8001' && nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 > backend.log 2>&1 &"
+  "sudo systemctl restart movierec && sudo systemctl status --no-pager movierec"
 
 # Test API
-curl http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com:8001/config
+curl http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com/config
 ```
 
 ## Next Steps After First Deployment

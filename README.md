@@ -117,9 +117,9 @@ The frontend will be available at: **http://localhost:5173**
 
 The app is automatically deployed to AWS EC2 via GitHub Actions when you push to the `master` branch.
 
-- **Frontend**: Served via Nginx
-- **Backend**: Running on port 8001
-- **Access**: https://your-ec2-domain.com
+- **Frontend**: Served via Nginx (port 80)
+- **Backend**: Uvicorn on 127.0.0.1:8000 managed by systemd (`movierec`) and proxied by Nginx
+- **Access**: http://ec2-13-59-13-187.us-east-2.compute.amazonaws.com
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions.
 

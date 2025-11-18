@@ -13,16 +13,16 @@ Automatically deploys the MovieRecommender app to EC2 on every push to `master`.
 1. ✅ Checks out code
 2. 📦 Builds React frontend (`npm run build`)
 3. 🚀 Transfers files to EC2 via SSH/rsync
-4. 🐍 Installs Python dependencies in virtual environment
-5. 🔄 Restarts FastAPI backend on port 8001
-6. ✔️ Verifies backend is running
+4. 🐍 Installs Python dependencies in a virtual environment in the service directory
+5. 🔄 Restarts the systemd service `movierec` (Uvicorn on 127.0.0.1:8000 behind Nginx)
+6. ✔️ Verifies health via HTTP GET to `http://$DEPLOY_HOST/config` (Nginx → Uvicorn)
 
 ### Deployment Target
 
 - **Host:** `ec2-13-59-13-187.us-east-2.compute.amazonaws.com`
 - **User:** `ec2-user`
-- **Directory:** `~/MovieRecommender-Henry/`
-- **Backend Port:** `8001`
+- **Directory:** `/home/ec2-user/movierec/movierec` (matches systemd WorkingDirectory)
+- **Backend:** Uvicorn on 8000 (behind Nginx on port 80)
 
 ### Files Deployed
 

@@ -8,6 +8,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ec2-13-59-13-187.us-east-2.compute.amazonaws.com
+      DEPLOY_USER: ec2-user
+      DEPLOY_DIR: /home/ec2-user/movierec/movierec
 
     steps:
       - name: Checkout code
@@ -36,60 +40,42 @@ jobs:
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem
+          # RAW PEM option (recommended):
+          printf "%s" "${{ secrets.AWS_PRIVATE_KEY }}" > ~/.ssh/deploy_key.pem
+          # If your secret is BASE64 instead of RAW, comment the line above and use:
+          # echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
-          ssh-keyscan -H ec2-13-59-13-187.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts
+          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
 
-      - name: Deploy to EC2
+      - name: SSH smoke test
         run: |
-          # Create deployment directory on EC2
-          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com "mkdir -p ~/MovieRecommender-Henry"
+          ssh -o BatchMode=yes -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "echo connected"
 
-          # Transfer files
+      - name: Create deploy dir on EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown -R ec2-user:ec2-user /home/ec2-user/movierec"
+
+      - name: Rsync files to service WorkingDirectory
+        run: |
           rsync -avz --delete -e "ssh -i ~/.ssh/deploy_key.pem" \
             deploy_package/ \
-            ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com:~/MovieRecommender-Henry/
+            $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/
 
-      - name: Install dependencies and restart services
+      - name: Install dependencies and restart systemd service
         run: |
-          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com << 'EOF'
-            cd ~/MovieRecommender-Henry
-            
-            # Install Python dependencies if venv doesn't exist or requirements changed
-            if [ ! -d ".venv" ]; then
-              python3 -m venv .venv
-            fi
-            source .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-            
-            # Stop existing backend process on port 8001 (if running)
-            pkill -f "uvicorn app.main:app.*8001" || true
-            
-            # Start backend in background on port 8001
-            nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 > backend.log 2>&1 &
-            
-            echo "Deployment complete!"
-            echo "Backend running on port 8001"
-          EOF
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "bash -lc 'set -e; cd $DEPLOY_DIR; if [ ! -d .venv ]; then python3 -m venv .venv; fi; source .venv/bin/activate; pip install --upgrade pip; pip install -r requirements.txt; sudo systemctl restart movierec; sudo systemctl status --no-pager movierec || true'"
 
-      - name: Verify deployment
+      - name: Health check (via Nginx on port 80)
         run: |
-          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com << 'EOF'
-            cd ~/MovieRecommender-Henry
-            
-            # Check if backend process is running
-            if pgrep -f "uvicorn app.main:app.*8001" > /dev/null; then
-              echo "✅ Backend is running on port 8001"
-              ps aux | grep "uvicorn app.main:app" | grep -v grep
-            else
-              echo "❌ Backend failed to start"
-              tail -n 50 backend.log
-              exit 1
-            fi
-          EOF
+          sleep 3
+          curl -fsS http://$DEPLOY_HOST/config || {
+            echo "Health check failed";
+            curl -v http://$DEPLOY_HOST/config || true;
+            # Show recent journal logs for faster debug
+            ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "sudo journalctl -u movierec --since '5 minutes ago' --no-pager || true"
+            exit 1;
+          }
 
       - name: Cleanup
         if: always()
-        run: |
-          rm -f ~/.ssh/deploy_key.pem
+        run: rm -f ~/.ssh/deploy_key.pem
