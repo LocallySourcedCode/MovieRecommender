@@ -40,16 +40,39 @@ jobs:
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          # RAW PEM option (recommended):
-          printf "%s" "${{ secrets.AWS_PRIVATE_KEY }}" > ~/.ssh/deploy_key.pem
-          # If your secret is BASE64 instead of RAW, comment the line above and use:
-          # echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem
+          # Write secret to a temp file first (do not assume format)
+          printf "%s" "${{ secrets.AWS_PRIVATE_KEY }}" > ~/.ssh/key_input.txt
+
+          # If the secret looks like a PEM (has BEGIN...PRIVATE KEY), use as-is; otherwise try base64-decode
+          if grep -q "BEGIN \\|PRIVATE KEY" ~/.ssh/key_input.txt; then
+            cp ~/.ssh/key_input.txt ~/.ssh/deploy_key.pem
+          else
+            # Attempt base64 decode into PEM
+            if echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem 2>/dev/null; then
+              echo "Decoded AWS_PRIVATE_KEY from base64."
+            else
+              echo "Failed to parse AWS_PRIVATE_KEY: not PEM and base64 decode failed." >&2
+              exit 1
+            fi
+          fi
+
+          # Normalize Windows CRLF to LF just in case
+          sed -i 's/\r$//' ~/.ssh/deploy_key.pem || true
+
           chmod 600 ~/.ssh/deploy_key.pem
+          # Validate key readability (will exit non-zero if invalid)
+          ssh-keygen -lf ~/.ssh/deploy_key.pem > ~/.ssh/deploy_key.fingerprint || {
+            echo "Invalid SSH private key provided in AWS_PRIVATE_KEY (failed to read fingerprint)." >&2
+            exit 1
+          }
+          echo "Using SSH key fingerprint: $(cat ~/.ssh/deploy_key.fingerprint)"
+
           ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
 
       - name: SSH smoke test
         run: |
-          ssh -o BatchMode=yes -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "echo connected"
+          # Use verbose output to aid debugging if auth fails
+          ssh -vvv -o BatchMode=yes -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "echo connected"
 
       - name: Create deploy dir on EC2
         run: |
