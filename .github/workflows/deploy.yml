@@ -133,24 +133,7 @@ jobs:
               sudo dnf install -y python3.11 || sudo yum install -y python3.11 || true
             fi
             # Ensure systemd unit points at the canonical directory
-            sudo tee /etc/systemd/system/movierec.service >/dev/null <<'EOF'
-            [Unit]
-            Description=MovieRecommender FastAPI (Uvicorn)
-            After=network.target
-
-            [Service]
-            User=ec2-user
-            WorkingDirectory=/home/ec2-user/MovieRecommender-Henry
-            Environment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"
-            ExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
-            Restart=always
-            RestartSec=2
-            StandardOutput=journal
-            StandardError=journal
-
-            [Install]
-            WantedBy=multi-user.target
-            EOF
+            sudo bash -lc $'cat > /etc/systemd/system/movierec.service <<\'EOF\'\n[Unit]\nDescription=MovieRecommender FastAPI (Uvicorn)\nAfter=network.target\n\n[Service]\nUser=ec2-user\nWorkingDirectory=/home/ec2-user/MovieRecommender-Henry\nEnvironment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"\nExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000\nRestart=always\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nEOF'
 
             # Reload unit to pick up any changes
             sudo systemctl daemon-reload
