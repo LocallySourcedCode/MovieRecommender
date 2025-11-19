@@ -11,7 +11,7 @@ jobs:
     env:
       DEPLOY_HOST: ec2-13-59-13-187.us-east-2.compute.amazonaws.com
       DEPLOY_USER: ec2-user
-      DEPLOY_DIR: /home/ec2-user/movierec/movierec
+      DEPLOY_DIR: /home/ec2-user/MovieRecommender-Henry
 
     steps:
       - name: Checkout code
@@ -36,6 +36,8 @@ jobs:
           cp -r app deploy_package/
           cp -r frontend/dist deploy_package/frontend-dist
           cp requirements.txt deploy_package/
+          # Stamp deployed commit for verification on server
+          git rev-parse HEAD > deploy_package/version.txt
 
       - name: Configure SSH
         run: |
@@ -76,7 +78,7 @@ jobs:
 
       - name: Create deploy dir on EC2
         run: |
-          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown -R ec2-user:ec2-user /home/ec2-user/movierec"
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown -R ec2-user:ec2-user $DEPLOY_DIR"
 
       - name: Rsync files to service WorkingDirectory
         run: |
@@ -86,7 +88,38 @@ jobs:
 
       - name: Install dependencies and restart systemd service
         run: |
-          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "bash -lc 'set -e; cd $DEPLOY_DIR; if [ ! -d .venv ]; then python3 -m venv .venv; fi; source .venv/bin/activate; pip install --upgrade pip; pip install -r requirements.txt; sudo systemctl restart movierec; sudo systemctl status --no-pager movierec || true'"
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST << 'EOSSH'
+            set -e
+            # Ensure systemd unit points at the canonical directory
+            sudo tee /etc/systemd/system/movierec.service >/dev/null <<'EOF'
+            [Unit]
+            Description=MovieRecommender FastAPI (Uvicorn)
+            After=network.target
+
+            [Service]
+            User=ec2-user
+            WorkingDirectory=/home/ec2-user/MovieRecommender-Henry
+            Environment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"
+            ExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+            Restart=always
+            RestartSec=2
+            StandardOutput=journal
+            StandardError=journal
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+
+            sudo systemctl daemon-reload
+            cd /home/ec2-user/MovieRecommender-Henry
+            if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+            source .venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            sudo systemctl enable movierec --now
+            sudo systemctl restart movierec
+            sudo systemctl status --no-pager movierec || true
+          EOSSH
 
       - name: Health check (via Nginx on port 80)
         run: |

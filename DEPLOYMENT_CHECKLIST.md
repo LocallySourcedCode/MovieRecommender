@@ -110,7 +110,7 @@
   ```
 - [ ] Verify Python dependencies installed
   ```bash
-  source /home/ec2-user/movierec/movierec/.venv/bin/activate
+  source /home/ec2-user/MovieRecommender-Henry/.venv/bin/activate
   pip list
   ```
 - [ ] Check if port 8000 is listening (optional)

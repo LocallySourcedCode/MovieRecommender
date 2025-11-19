@@ -21,7 +21,7 @@ Automatically deploys the MovieRecommender app to EC2 on every push to `master`.
 
 - **Host:** `ec2-13-59-13-187.us-east-2.compute.amazonaws.com`
 - **User:** `ec2-user`
-- **Directory:** `/home/ec2-user/movierec/movierec` (matches systemd WorkingDirectory)
+- **Directory:** `/home/ec2-user/MovieRecommender-Henry` (matches systemd WorkingDirectory)
 - **Backend:** Uvicorn on 8000 (behind Nginx on port 80)
 
 ### Files Deployed

@@ -28,12 +28,13 @@ The workflow automatically deploys on every push to `master` branch.
 3. Installs Python dependencies in a virtual environment
 4. Restarts the systemd service `movierec` (Uvicorn on 127.0.0.1:8000 behind Nginx)
 
-**Deployment location on EC2:**
+**Deployment location on EC2 (canonical):**
 ```
-/home/ec2-user/movierec/movierec
+/home/ec2-user/MovieRecommender-Henry
 ├── app/                    # FastAPI backend
 ├── frontend-dist/          # Built React frontend
 ├── requirements.txt
+├── version.txt             # Deployed commit SHA (written by workflow)
 └── .venv/                  # Python virtual environment (managed by workflow)
 ```
 
@@ -117,7 +118,7 @@ If your app needs environment variables (e.g., `TMDB_API_KEY`), add them to the 
 ssh -i ~/.ssh/movie-recommender-ec2.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com
 
 # Create .env file in the service directory
-cd /home/ec2-user/movierec/movierec
+cd /home/ec2-user/MovieRecommender-Henry
 cat > .env << 'EOF'
 TMDB_READ_TOKEN=your_token_here
 TMDB_REGION=US
@@ -161,9 +162,9 @@ After=network.target
 
 [Service]
 User=ec2-user
-WorkingDirectory=/home/ec2-user/movierec/movierec
-Environment="PATH=/home/ec2-user/movierec/movierec/.venv/bin:/usr/local/bin:/usr/bin"
-ExecStart=/home/ec2-user/movierec/movierec/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/home/ec2-user/MovieRecommender-Henry
+Environment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=2
 StandardOutput=journal
