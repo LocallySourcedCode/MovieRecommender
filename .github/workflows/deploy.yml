@@ -84,7 +84,10 @@ jobs:
 
       - name: Rsync files to service WorkingDirectory
         run: |
-          rsync -avz --delete -e "ssh -i ~/.ssh/deploy_key.pem" \
+          rsync -avz --delete \
+            --exclude ".venv/" \
+            --exclude ".env" \
+            -e "ssh -i ~/.ssh/deploy_key.pem" \
             deploy_package/ \
             $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/
 
@@ -95,7 +98,7 @@ jobs:
             sudo mkdir -p /var/www/movierec
             # Copy built frontend assets to the Nginx root
             sudo rm -rf /var/www/movierec/*
-            sudo cp -r $DEPLOY_DIR/frontend-dist/* /var/www/movierec/
+            sudo cp -r /home/ec2-user/MovieRecommender-Henry/frontend-dist/* /var/www/movierec/
             sudo chown -R root:root /var/www/movierec
             sudo nginx -t
             sudo systemctl reload nginx
@@ -105,6 +108,10 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST << 'EOSSH'
             set -e
+            # Ensure Python 3.11 is available (needed for PEP 604 | types used in code)
+            if ! command -v python3.11 >/dev/null 2>&1; then
+              sudo dnf install -y python3.11 || sudo yum install -y python3.11 || true
+            fi
             # Ensure systemd unit points at the canonical directory
             sudo tee /etc/systemd/system/movierec.service >/dev/null <<'EOF'
             [Unit]
@@ -128,8 +135,8 @@ jobs:
             # Reload unit to pick up any changes
             sudo systemctl daemon-reload
             cd /home/ec2-user/MovieRecommender-Henry
-            # Create venv if missing; try python3 then python3.11 as fallback
-            if [ ! -d ".venv" ]; then (python3 -m venv .venv || python3.11 -m venv .venv); fi
+            # Create venv if missing; prefer python3.11, fall back to python3
+            if [ ! -d ".venv" ]; then (python3.11 -m venv .venv || python3 -m venv .venv); fi
             source .venv/bin/activate
             pip install --upgrade pip
             pip install -r requirements.txt
