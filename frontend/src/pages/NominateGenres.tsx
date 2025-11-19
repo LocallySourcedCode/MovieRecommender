@@ -81,32 +81,55 @@ export function NominateGenres() {
   }
 
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <h3 style={{ marginRight: 'auto' }}>Nominate Genres ({code})</h3>
+    <div className="page-container-wide">
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem' }}>
+        <button onClick={() => nav(`/g/${code}`)} className="btn btn-back">
+          ← Back
+        </button>
+        <h1 style={{ flex: 1, textAlign: 'center', fontSize: '2rem', fontWeight: 700, color: 'white', margin: 0 }}>Nominate Genres</h1>
         {progress && (
-          <div style={{ fontSize: 14, color: '#374151' }} title="Participants who have submitted nominations">
-            Nominated: <strong>{progress.nominated_count}</strong> / {progress.total_participants}
+          <div className="badge badge-host">
+            ✅ {progress.nominated_count} / {progress.total_participants} Nominated
           </div>
         )}
       </div>
-      <GenreToggle value={selected} onChange={setSelected} />
-      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-        <button onClick={submit} disabled={saving || selected.length === 0}>Submit Nomination</button>
-        {isHost && (
-          <button title="Restart movie recommendation process to genre nomination" type="button" onClick={async ()=>{ try { await api.resetGenres(code!); nav(`/g/${code}/nominate-genres`) } catch(e){} }}>
-            Restart
+      
+      <div className="card">
+        <h2 className="card-title">Select Your Favorite Genres</h2>
+        <GenreToggle value={selected} onChange={setSelected} />
+        
+        <div className="btn-group">
+          <button onClick={submit} disabled={saving || selected.length === 0} className="btn btn-primary">
+            ✨ Submit Nomination
           </button>
-        )}
+          {isHost && (
+            <button 
+              title="Restart movie recommendation process to genre nomination" 
+              type="button" 
+              onClick={async ()=>{ try { await api.resetGenres(code!); nav(`/g/${code}/nominate-genres`) } catch(e){} }}
+              className="btn btn-danger"
+            >
+              🔄 Restart
+            </button>
+          )}
+        </div>
+        
+        {error && <div role="alert" className="alert alert-error">{error}</div>}
       </div>
-      {error && <div role="alert" style={{ color: '#b91c1c', background: '#fee2e2', padding: '6px 10px', borderRadius: 6, marginTop: 8 }}>{error}</div>}
-      <div style={{ marginTop: 16 }}>
-        <h4>Current Nominations</h4>
-        <ul>
-          {tally.map(row => (
-            <li key={row.genre}>{row.genre}: {row.count}</li>
-          ))}
-        </ul>
+      
+      <div className="card">
+        <h3 className="card-title">Current Nominations</h3>
+        {tally.length === 0 ? (
+          <p style={{ color: '#6b7280' }}>No nominations yet. Be the first!</p>
+        ) : (
+          <div className="pill-group">
+            {tally.map(row => (
+              <div key={row.genre} className="pill active" style={{ cursor: 'default' }}>
+                {row.genre} <span style={{ marginLeft: '0.5rem', background: 'rgba(255,255,255,0.3)', padding: '0.125rem 0.5rem', borderRadius: '0.25rem' }}>{row.count}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

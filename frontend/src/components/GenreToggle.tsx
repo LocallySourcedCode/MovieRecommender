@@ -20,8 +20,8 @@ export function GenreToggle({ value, onChange, max = 2 }: { value: string[]; onC
 
   return (
     <div>
-      <div style={{ marginBottom: 6 }}>Pick up to {max} genres:</div>
-      <div role="group" aria-label="Genres" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <p style={{ marginBottom: '0.75rem', color: '#6b7280' }}>Choose up to {max} genres you'd like to watch</p>
+      <div className="pill-group" role="group" aria-label="Genres">
         {GENRES.map(g => {
           const active = value.includes(g)
           const disabled = !active && value.length >= max
@@ -32,15 +32,7 @@ export function GenreToggle({ value, onChange, max = 2 }: { value: string[]; onC
               aria-pressed={active}
               aria-disabled={disabled}
               onClick={() => toggle(g)}
-              style={{
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid #ccc',
-                background: active ? '#10b981' : 'white',
-                color: active ? 'white' : 'black',
-                cursor: disabled ? 'not-allowed' : 'pointer',
-                opacity: disabled ? 0.6 : 1,
-              }}
+              className={`pill ${active ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
             >
               {g}
             </button>

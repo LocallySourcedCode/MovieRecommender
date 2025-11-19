@@ -4,17 +4,29 @@ import { api } from './api'
 import { getToken, clearToken } from './utils/storage'
 
 export function App() {
-  const [who, setWho] = useState<{ kind: string; email?: string; display_name?: string } | null>(null)
+  const [who, setWho] = useState<{ kind: string; email?: string; display_name?: string; group_id?: number } | null>(null)
+  const [groupCode, setGroupCode] = useState<string | null>(null)
   const nav = useNavigate()
   const location = useLocation()
 
   useEffect(() => {
     let mounted = true
     if (getToken()) {
-      api.whoami().then(setWho).catch(() => setWho(null))
+      api.whoami().then(w => {
+        if (mounted) setWho(w)
+      }).catch(() => setWho(null))
     } else {
       setWho(null)
     }
+    
+    // Extract group code from URL if present
+    const match = location.pathname.match(/\/g\/([A-Z0-9]+)/)
+    if (match) {
+      setGroupCode(match[1])
+    } else {
+      setGroupCode(null)
+    }
+    
     return () => { mounted = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname])
@@ -26,26 +38,34 @@ export function App() {
   }
 
   return (
-    <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif', margin: 20 }}>
-      <header style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Movie Recommender</h2>
-        <nav style={{ display: 'flex', gap: 12 }}>
-          <Link to="/groups/new">New Group</Link>
-          <Link to="/join">Join Group</Link>
-          <Link to="/signin">Sign In</Link>
+    <div>
+      <header className="app-header">
+        <Link to="/" className="app-logo">
+          <div className="app-logo-icon">🎬</div>
+          <span>MovieMatch</span>
+        </Link>
+        <nav className="app-nav">
+          <Link to="/groups/new" className="nav-link">New Group</Link>
+          <Link to="/join" className="nav-link">Join Group</Link>
+          {groupCode && (
+            <Link to={`/g/${groupCode}`} className="nav-link">Our Group</Link>
+          )}
+          <Link to="/signin" className="nav-link">Sign In</Link>
         </nav>
-        <div style={{ marginLeft: 'auto' }}>
+        <div className="user-info">
           {who ? (
             <>
-              <span style={{ marginRight: 8 }}>Signed in as {who.email || who.display_name}</span>
-              <button onClick={logout}>Log out</button>
+              <span className="user-badge">{who.email || who.display_name}</span>
+              <button onClick={logout} className="btn btn-secondary">Log out</button>
             </>
           ) : (
-            <span>Guest mode</span>
+            <span className="guest-badge">Guest mode</span>
           )}
         </div>
       </header>
-      <Outlet />
+      <div className="app-content">
+        <Outlet />
+      </div>
     </div>
   )
 }

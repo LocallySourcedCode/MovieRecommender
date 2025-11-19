@@ -44,27 +44,53 @@ export function JoinGroup() {
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <h3>Join a Group</h3>
-      <form onSubmit={onSubmit}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <label>
-            Group Code
-            <input value={code} onChange={e => setCode(e.target.value.toUpperCase())} required placeholder="ABC123" />
-          </label>
+    <div className="page-container">
+      <div className="page-header">
+        <h1 className="page-title">Join a Group</h1>
+        <p className="page-subtitle">Enter a group code to join an existing session</p>
+      </div>
+      
+      <div className="card">
+        <form onSubmit={onSubmit}>
+          <div className="form-group">
+            <label className="form-label">Group Code</label>
+            <input 
+              className="form-input"
+              value={code} 
+              onChange={e => setCode(e.target.value.toUpperCase())} 
+              required 
+              placeholder="ABC123" 
+              style={{ textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}
+            />
+          </div>
+          
           {!getToken() && (
             <>
-              <label>
-                Display name
-                <input value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="Your name" />
-              </label>
-              <ServicesToggle value={services} onChange={setServices} />
+              <div className="form-group">
+                <label className="form-label">Display Name</label>
+                <input 
+                  className="form-input"
+                  value={displayName} 
+                  onChange={e => setDisplayName(e.target.value)} 
+                  required 
+                  placeholder="Your name" 
+                />
+              </div>
+              
+              <div className="form-group">
+                <label className="form-label">Streaming Services (Optional)</label>
+                <ServicesToggle value={services} onChange={setServices} />
+              </div>
             </>
           )}
-          <button type="submit">Join</button>
-        </div>
-      </form>
-      {error && <div role="alert" style={{ color: 'crimson', marginTop: 8 }}>{error}</div>}
+          
+          <button type="submit" className="btn btn-primary btn-large">
+            🚀 Join Group
+          </button>
+        </form>
+        
+        {error && <div role="alert" className="alert alert-error">{error}</div>}
+      </div>
     </div>
   )
 }
