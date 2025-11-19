@@ -4,10 +4,35 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  runner_check:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Print runner diagnostics
+        run: |
+          echo "Runner OS: $RUNNER_OS"
+          uname -a || true
+          (lsb_release -a || cat /etc/os-release) 2>/dev/null || true
+          node --version || true
+          python3 --version || true
+          df -h || true
+
   deploy:
-    runs-on: ubuntu-latest
+    needs: runner_check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      DEPLOY_HOST: ec2-13-59-13-187.us-east-2.compute.amazonaws.com
+      DEPLOY_USER: ec2-user
+      DEPLOY_DIR: /home/ec2-user/MovieRecommender-Henry
+      SITE_HOST: groupmovierec.com
 
     steps:
       - name: Checkout code
@@ -24,7 +49,8 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm run build
+          # Ensure the built app calls the API via Nginx proxy at /api
+          VITE_API_BASE=/api npm run build
 
       - name: Prepare deployment files
         run: |
@@ -32,64 +58,134 @@ jobs:
           cp -r app deploy_package/
           cp -r frontend/dist deploy_package/frontend-dist
           cp requirements.txt deploy_package/
+          # Stamp deployed commit for verification on server
+          git rev-parse HEAD > deploy_package/version.txt
 
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem
-          chmod 600 ~/.ssh/deploy_key.pem
-          ssh-keyscan -H ec2-13-59-13-187.us-east-2.compute.amazonaws.com >> ~/.ssh/known_hosts
+          # Write secret to a temp file first (do not assume format)
+          printf "%s" "${{ secrets.AWS_PRIVATE_KEY }}" > ~/.ssh/key_input.txt
 
-      - name: Deploy to EC2
-        run: |
-          # Create deployment directory on EC2
-          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com "mkdir -p ~/MovieRecommender-Henry"
-
-          # Transfer files
-          rsync -avz --delete -e "ssh -i ~/.ssh/deploy_key.pem" \
-            deploy_package/ \
-            ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com:~/MovieRecommender-Henry/
-
-      - name: Install dependencies and restart services
-        run: |
-          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com << 'EOF'
-            cd ~/MovieRecommender-Henry
-            
-            # Install Python dependencies if venv doesn't exist or requirements changed
-            if [ ! -d ".venv" ]; then
-              python3 -m venv .venv
-            fi
-            source .venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-            
-            # Stop existing backend process on port 8001 (if running)
-            pkill -f "uvicorn app.main:app.*8001" || true
-            
-            # Start backend in background on port 8001
-            nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 > backend.log 2>&1 &
-            
-            echo "Deployment complete!"
-            echo "Backend running on port 8001"
-          EOF
-
-      - name: Verify deployment
-        run: |
-          ssh -i ~/.ssh/deploy_key.pem ec2-user@ec2-13-59-13-187.us-east-2.compute.amazonaws.com << 'EOF'
-            cd ~/MovieRecommender-Henry
-            
-            # Check if backend process is running
-            if pgrep -f "uvicorn app.main:app.*8001" > /dev/null; then
-              echo "✅ Backend is running on port 8001"
-              ps aux | grep "uvicorn app.main:app" | grep -v grep
+          # If the secret looks like a PEM (has BEGIN...PRIVATE KEY), use as-is; otherwise try base64-decode
+          if grep -q "BEGIN \\|PRIVATE KEY" ~/.ssh/key_input.txt; then
+            cp ~/.ssh/key_input.txt ~/.ssh/deploy_key.pem
+          else
+            # Attempt base64 decode into PEM
+            if echo "${{ secrets.AWS_PRIVATE_KEY }}" | base64 -d > ~/.ssh/deploy_key.pem 2>/dev/null; then
+              echo "Decoded AWS_PRIVATE_KEY from base64."
             else
-              echo "❌ Backend failed to start"
-              tail -n 50 backend.log
+              echo "Failed to parse AWS_PRIVATE_KEY: not PEM and base64 decode failed." >&2
               exit 1
             fi
-          EOF
+          fi
+
+          # Normalize Windows CRLF to LF just in case
+          sed -i 's/\r$//' ~/.ssh/deploy_key.pem || true
+
+          chmod 600 ~/.ssh/deploy_key.pem
+          # Validate key readability (will exit non-zero if invalid)
+          ssh-keygen -lf ~/.ssh/deploy_key.pem > ~/.ssh/deploy_key.fingerprint || {
+            echo "Invalid SSH private key provided in AWS_PRIVATE_KEY (failed to read fingerprint)." >&2
+            exit 1
+          }
+          echo "Using SSH key fingerprint: $(cat ~/.ssh/deploy_key.fingerprint)"
+
+          ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+
+      - name: SSH smoke test
+        run: |
+          # Use verbose output to aid debugging if auth fails
+          ssh -vvv -o BatchMode=yes -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "echo connected"
+
+      - name: Create deploy dir on EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "sudo mkdir -p $DEPLOY_DIR && sudo chown -R ec2-user:ec2-user $DEPLOY_DIR"
+
+      - name: Rsync files to service WorkingDirectory
+        run: |
+          rsync -avz --delete \
+            --exclude ".venv/" \
+            --exclude ".env" \
+            -e "ssh -i ~/.ssh/deploy_key.pem" \
+            deploy_package/ \
+            $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/
+
+      - name: Publish frontend to Nginx web root and reload Nginx
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST << 'EOSSH'
+            set -e
+            sudo mkdir -p /var/www/movierec
+            # Copy built frontend assets to the Nginx root
+            sudo rm -rf /var/www/movierec/*
+            sudo cp -r /home/ec2-user/MovieRecommender-Henry/frontend-dist/* /var/www/movierec/
+            sudo chown -R root:root /var/www/movierec
+            sudo nginx -t
+            sudo systemctl reload nginx
+          EOSSH
+
+      - name: Install dependencies and restart systemd service
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST << 'EOSSH'
+            set -e
+            # Ensure Python 3.11 is available (needed for PEP 604 | types used in code)
+            if ! command -v python3.11 >/dev/null 2>&1; then
+              sudo dnf install -y python3.11 || sudo yum install -y python3.11 || true
+            fi
+            # Ensure systemd unit points at the canonical directory
+            sudo bash -lc $'cat > /etc/systemd/system/movierec.service <<\'EOF\'\n[Unit]\nDescription=MovieRecommender FastAPI (Uvicorn)\nAfter=network.target\n\n[Service]\nUser=ec2-user\nWorkingDirectory=/home/ec2-user/MovieRecommender-Henry\nEnvironment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"\nExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000\nRestart=always\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nEOF'
+
+            # Reload unit to pick up any changes
+            sudo systemctl daemon-reload
+            cd /home/ec2-user/MovieRecommender-Henry
+            # Create venv if missing; prefer python3.11, fall back to python3
+            if [ ! -d ".venv" ]; then (python3.11 -m venv .venv || python3 -m venv .venv); fi
+            source .venv/bin/activate
+            echo "Python inside venv:"; python --version || true
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            echo "Uvicorn version:"; uvicorn --version || true
+            echo "Top installed packages:"; pip list | sed -n '1,40p' || true
+            sudo systemctl enable movierec --now
+            sudo systemctl restart movierec
+            # Brief local readiness probe (non-fatal; external check will retry)
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8000/config >/dev/null; then
+                echo "Local backend health OK"
+                break
+              fi
+              sleep 2
+            done
+            sudo systemctl status --no-pager movierec || true
+            sudo ss -tlnp | grep 8000 || true
+          EOSSH
+
+      - name: Health check (via Nginx HTTPS -> /api)
+        run: |
+          # Retry external health up to ~90s to account for startup
+          sleep 5
+          ok=0
+          for i in $(seq 1 45); do
+            if curl -fsS https://$SITE_HOST/api/config >/dev/null; then
+              echo "External health OK at attempt $i"
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "Health check failed; collecting diagnostics..."
+            curl -vk https://$SITE_HOST/api/config || true
+            ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "set -x; \
+              sudo systemctl status --no-pager movierec || true; \
+              sudo journalctl -u movierec -n 200 --no-pager || true; \
+              sudo ss -tlnp | grep 8000 || true; \
+              curl -i http://127.0.0.1:8000/config || true; \
+              systemctl cat movierec || true; \
+              sudo tail -n 200 /var/log/nginx/error.log || true"
+            exit 1
+          fi
 
       - name: Cleanup
         if: always()
-        run: |
-          rm -f ~/.ssh/deploy_key.pem
+        run: rm -f ~/.ssh/deploy_key.pem
