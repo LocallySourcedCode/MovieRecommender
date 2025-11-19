@@ -12,6 +12,7 @@ jobs:
       DEPLOY_HOST: ec2-13-59-13-187.us-east-2.compute.amazonaws.com
       DEPLOY_USER: ec2-user
       DEPLOY_DIR: /home/ec2-user/MovieRecommender-Henry
+      SITE_HOST: groupmovierec.com
 
     steps:
       - name: Checkout code
@@ -28,7 +29,8 @@ jobs:
         run: |
           cd frontend
           npm ci
-          npm run build
+          # Ensure the built app calls the API via Nginx proxy at /api
+          VITE_API_BASE=/api npm run build
 
       - name: Prepare deployment files
         run: |
@@ -86,6 +88,19 @@ jobs:
             deploy_package/ \
             $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/
 
+      - name: Publish frontend to Nginx web root and reload Nginx
+        run: |
+          ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST << 'EOSSH'
+            set -e
+            sudo mkdir -p /var/www/movierec
+            # Copy built frontend assets to the Nginx root
+            sudo rm -rf /var/www/movierec/*
+            sudo cp -r $DEPLOY_DIR/frontend-dist/* /var/www/movierec/
+            sudo chown -R root:root /var/www/movierec
+            sudo nginx -t
+            sudo systemctl reload nginx
+          EOSSH
+
       - name: Install dependencies and restart systemd service
         run: |
           ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST << 'EOSSH'
@@ -110,9 +125,11 @@ jobs:
             WantedBy=multi-user.target
             EOF
 
+            # Reload unit to pick up any changes
             sudo systemctl daemon-reload
             cd /home/ec2-user/MovieRecommender-Henry
-            if [ ! -d ".venv" ]; then python3 -m venv .venv; fi
+            # Create venv if missing; try python3 then python3.11 as fallback
+            if [ ! -d ".venv" ]; then (python3 -m venv .venv || python3.11 -m venv .venv); fi
             source .venv/bin/activate
             pip install --upgrade pip
             pip install -r requirements.txt
@@ -121,12 +138,12 @@ jobs:
             sudo systemctl status --no-pager movierec || true
           EOSSH
 
-      - name: Health check (via Nginx on port 80)
+      - name: Health check (via Nginx HTTPS -> /api)
         run: |
           sleep 3
-          curl -fsS http://$DEPLOY_HOST/config || {
+          curl -fsS https://$SITE_HOST/api/config || {
             echo "Health check failed";
-            curl -v http://$DEPLOY_HOST/config || true;
+            curl -vk https://$SITE_HOST/api/config || true;
             # Show recent journal logs for faster debug
             ssh -i ~/.ssh/deploy_key.pem $DEPLOY_USER@$DEPLOY_HOST "sudo journalctl -u movierec --since '5 minutes ago' --no-pager || true"
             exit 1;
