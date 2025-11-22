@@ -1,21 +1,21 @@
-import React, { useState } from 'react'
-import { api } from '../api'
-import { useNavigate } from 'react-router-dom'
+import React, { useState } from "react";
+import { api } from "../api";
+import { useNavigate } from "react-router-dom";
 
 export function SignIn() {
-  const nav = useNavigate()
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const nav = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
+    e.preventDefault();
+    setError(null);
     try {
-      await api.login(email, password)
-      nav('/groups/new')
+      await api.login(email, password);
+      nav("/groups/new");
     } catch (err: any) {
-      setError(err?.message || 'Login failed')
+      setError(err?.message || "Login failed");
     }
   }
 
@@ -25,40 +25,58 @@ export function SignIn() {
         <h1 className="page-title">Sign In</h1>
         <p className="page-subtitle">Access your account to manage groups</p>
       </div>
-      
+
       <div className="card">
         <form onSubmit={onSubmit}>
           <div className="form-group">
             <label className="form-label">Email</label>
-            <input 
+            <input
               className="form-input"
-              value={email} 
-              onChange={e => setEmail(e.target.value)} 
-              type="email" 
-              placeholder="you@example.com" 
-              required 
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              placeholder="you@example.com"
+              required
             />
           </div>
-          
+
           <div className="form-group">
             <label className="form-label">Password</label>
-            <input 
+            <input
               className="form-input"
-              value={password} 
-              onChange={e => setPassword(e.target.value)} 
-              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
               placeholder="••••••••"
-              required 
+              required
             />
           </div>
-          
+
           <button type="submit" className="btn btn-primary btn-large">
             ⚡ Sign In
           </button>
+
+          <div style={{ marginTop: "1rem", textAlign: "center" }}>
+            <span style={{ color: "#888" }}>No account? </span>
+            <a
+              href="/register"
+              style={{
+                color: "#4CAF50",
+                textDecoration: "none",
+                fontWeight: 500,
+              }}
+            >
+              Create one
+            </a>
+          </div>
         </form>
-        
-        {error && <div role="alert" className="alert alert-error">{error}</div>}
+
+        {error && (
+          <div role="alert" className="alert alert-error">
+            {error}
+          </div>
+        )}
       </div>
     </div>
-  )
+  );
 }
