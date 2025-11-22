@@ -60,6 +60,11 @@ jobs:
           cp requirements.txt deploy_package/
           # Stamp deployed commit for verification on server
           git rev-parse HEAD > deploy_package/version.txt
+          # Create .env file with TMDb credentials from GitHub secrets
+          cat > deploy_package/.env << EOF
+          TMDB_READ_TOKEN=${{ secrets.TMDB_READ_TOKEN }}
+          TMDB_REGION=US
+          EOF
 
       - name: Configure SSH
         run: |
@@ -106,7 +111,6 @@ jobs:
         run: |
           rsync -avz --delete \
             --exclude ".venv/" \
-            --exclude ".env" \
             -e "ssh -i ~/.ssh/deploy_key.pem" \
             deploy_package/ \
             $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/
