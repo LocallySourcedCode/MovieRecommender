@@ -7,6 +7,7 @@ email-validator
 python-jose
 passlib
 python-multipart
+python-dotenv
 # Include uvicorn extras for production-ready server features (watchfiles, httptools, etc.)
 uvicorn[standard]
 # Used by both tests and runtime (TMDb integration and TestClient)
