@@ -1,15 +1,22 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { api } from '../api'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { getToken, clearToken } from '../utils/storage'
 import { ServicesToggle } from '../components/ServicesToggle'
 
 export function JoinGroup() {
   const nav = useNavigate()
+  const location = useLocation()
   const [code, setCode] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [services, setServices] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (location.state?.code) {
+      setCode(location.state.code)
+    }
+  }, [location.state])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()

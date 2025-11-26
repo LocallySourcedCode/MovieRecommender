@@ -29,7 +29,7 @@ export function CreateGroup() {
       }
       const res = await api.createGroupGuest(displayName, services.length ? services : undefined)
       const code = res?.group?.code
-      if (code) nav(`/g/${code}/nominate-genres`)
+      if (code) nav(`/g/${code}`)
     } catch (err: any) {
       setError(err?.message || 'Failed to create group')
     } finally {

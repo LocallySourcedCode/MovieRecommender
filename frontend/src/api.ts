@@ -101,5 +101,8 @@ export const api = {
   },
   async getProgress(code: string) {
     return request(`/groups/${code}/progress`)
+  },
+  async startNomination(code: string) {
+    return request(`/groups/${code}/start`, { method: 'POST' })
   }
 }

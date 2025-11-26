@@ -330,7 +330,7 @@ def create_group(
             )
         # Create group with host_user_id
         group = Group(code=code, host_user_id=principal.id,
-                      phase="genre_nomination")
+                      phase="setup")
         session.add(group)
         session.commit()
         session.refresh(group)
@@ -347,7 +347,7 @@ def create_group(
         if guest_payload is None or not guest_payload.display_name:
             raise HTTPException(
                 status_code=422, detail="display_name is required for guests")
-        group = Group(code=code, host_user_id=None, phase="genre_nomination")
+        group = Group(code=code, host_user_id=None, phase="setup")
         session.add(group)
         session.commit()
         session.refresh(group)
@@ -996,6 +996,31 @@ def _genre_tally(session: Session, group_id: int) -> list[dict]:
     out = [{"genre": g, "count": c} for g, c in counts.items()]
     out.sort(key=lambda x: (-x["count"], x["genre"]))
     return out
+
+
+@app.post("/groups/{code}/start")
+def start_nomination(
+    code: str,
+    token: str = Depends(oauth2_scheme),
+    session: Session = Depends(get_session),
+):
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    # Require host
+    principal = _require_member(session, group, token)
+    if not principal.is_host:
+        raise HTTPException(status_code=403, detail="Only host can start nominations")
+
+    # Allow restarting if already in nomination, or starting from setup
+    if group.phase not in ("setup", "genre_nomination"):
+        raise HTTPException(status_code=400, detail="Group is not in setup phase")
+
+    group.phase = "genre_nomination"
+    session.add(group)
+    session.commit()
+    return {"ok": True, "phase": group.phase}
 
 
 @app.post("/groups/{code}/genres/nominate")

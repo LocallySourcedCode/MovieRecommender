@@ -22,8 +22,13 @@ export function GroupLobby() {
       try {
         const p = await api.getProgress(code!)
         if (active) setProgress(p)
-      } catch (err) {
-        // ignore and show hub
+      } catch (err: any) {
+        // If 403/404, likely not a member or group doesn't exist.
+        // Redirect to join page with code.
+        const m = err.message || ''
+        if (m.includes('403') || m.includes('404') || m.includes('401') || m.includes('Not a member') || m.includes('Not authenticated')) {
+           nav('/join', { state: { code } })
+        }
       }
     }
     go()
@@ -31,6 +36,22 @@ export function GroupLobby() {
     return () => { active = false; clearInterval(interval) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code])
+
+  // Auto-redirect when phase changes to genre_nomination
+  useEffect(() => {
+    if (progress?.phase === 'genre_nomination') {
+      nav(`/g/${code}/nominate-genres`)
+    }
+  }, [progress?.phase, code, nav])
+
+  async function startVoting() {
+    try {
+      await api.startNomination(code!)
+      // The polling will pick up the phase change and redirect
+    } catch (err: any) {
+      setError(err?.message || 'Failed to start voting')
+    }
+  }
 
   async function resetGenres() {
     setMsg(null)
@@ -66,7 +87,8 @@ export function GroupLobby() {
   }
 
   function getPhaseDisplay(phase: string) {
-    if (phase === 'genre_nomination' || phase === 'setup') return { name: 'Genre Nomination', icon: '🎭', color: '#dbeafe' }
+    if (phase === 'setup') return { name: 'Waiting for Host', icon: '⏳', color: '#f3f4f6' }
+    if (phase === 'genre_nomination') return { name: 'Genre Nomination', icon: '🎭', color: '#dbeafe' }
     if (phase === 'genre_voting') return { name: 'Genre Voting', icon: '🗳️', color: '#fef3c7' }
     if (phase === 'movie_selection') return { name: 'Movie Selection', icon: '🎬', color: '#fce7f3' }
     if (phase === 'finalized') return { name: 'Finalized', icon: '🎉', color: '#d1fae5' }
@@ -110,7 +132,7 @@ export function GroupLobby() {
             <div className="phase-info">
               <div className="phase-name">{phaseInfo.name}</div>
               <div className="phase-description">
-                {progress.total_participants} / {progress.total_participants} participants active
+                {progress.total_participants} participant{progress.total_participants !== 1 ? 's' : ''} joined
               </div>
             </div>
             <div className="phase-indicator"></div>
@@ -126,7 +148,17 @@ export function GroupLobby() {
               Go to Movie Voting →
             </button>
           )}
-          {(progress.phase === 'genre_nomination' || progress.phase === 'setup') && (
+          {progress.phase === 'setup' && who?.is_host && (
+             <button onClick={startVoting} className="btn btn-primary btn-large">
+               Start Voting Process →
+             </button>
+          )}
+          {progress.phase === 'setup' && !who?.is_host && (
+             <div style={{ textAlign: 'center', padding: '1rem', color: '#6b7280' }}>
+               Waiting for the host to start the voting process...
+             </div>
+          )}
+          {progress.phase === 'genre_nomination' && (
             <button onClick={() => nav(`/g/${code}/nominate-genres`)} className="btn btn-primary btn-large">
               Go to Genre Nomination →
             </button>
