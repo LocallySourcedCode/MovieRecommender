@@ -38,22 +38,44 @@ export function CreateGroup() {
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <h3>Create a Group (Guest)</h3>
-      <form onSubmit={onCreateGuest}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <label>
-            Display name (for guests)
-            <input value={displayName} onChange={e => setDisplayName(e.target.value)} required placeholder="Your name" />
-          </label>
-          <ServicesToggle value={services} onChange={setServices} />
-          <button type="submit" disabled={creating}>Create Group</button>
+    <div className="page-container">
+      <div className="page-header">
+        <h1 className="page-title">Create a Group</h1>
+        <p className="page-subtitle">Start a new movie selection session with your friends</p>
+      </div>
+      
+      <div className="card">
+        <form onSubmit={onCreateGuest}>
+          <div className="form-group">
+            <label className="form-label">Display Name</label>
+            <input 
+              className="form-input"
+              value={displayName} 
+              onChange={e => setDisplayName(e.target.value)} 
+              required 
+              placeholder="Enter your name" 
+            />
+          </div>
+          
+          <div className="form-group">
+            <label className="form-label">Streaming Services (Optional)</label>
+            <ServicesToggle value={services} onChange={setServices} />
+          </div>
+          
+          <button type="submit" disabled={creating} className="btn btn-primary btn-large">
+            🎬 Create Group
+          </button>
+        </form>
+        
+        {error && <div role="alert" className="alert alert-error">{error}</div>}
+        
+        <div className="tip-box">
+          <span className="tip-icon">💡</span>
+          <p className="tip-text">
+            Tip: If you are signed in as a user, you can also create a group from your account. Use the Sign In link above first.
+          </p>
         </div>
-      </form>
-      {error && <div role="alert" style={{ color: 'crimson', marginTop: 8 }}>{error}</div>}
-      <p style={{ marginTop: 16 }}>
-        If you are signed in as a user, you can also create a group from your account; use the Sign In link above first.
-      </p>
+      </div>
     </div>
   )
 }

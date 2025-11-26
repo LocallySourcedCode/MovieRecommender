@@ -26,7 +26,7 @@ export function Movies() {
   async function useVeto() {
     setMsg(null)
     try {
-      const res = await api.useVeto(code)
+      const res = await api.useVeto(code!)
       if (res?.status === 'current') setMsg('Current movie vetoed. A new option is shown.')
     } catch (err: any) {
       setMsg(err?.message || 'Veto failed')
@@ -34,17 +34,29 @@ export function Movies() {
   }
 
   return (
-    <div>
-      <h3>Movies ({code})</h3>
-      <div style={{ marginBottom: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button onClick={useVeto}>Use Veto</button>
-        {isHost && (
-          <button title="Restart movie recommendation process to genre nomination" onClick={async ()=>{ try { await api.resetGenres(code!); nav(`/g/${code}/nominate-genres`) } catch(e){} }}>
-            Restart
+    <div className="page-container-wide">
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '2rem' }}>
+        <button onClick={() => nav(`/g/${code}`)} className="btn btn-back">
+          ← Back
+        </button>
+        <h1 style={{ flex: 1, textAlign: 'center', fontSize: '2rem', fontWeight: 700, color: 'white', margin: 0 }}>Movie Selection</h1>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button onClick={useVeto} className="btn btn-secondary">
+            ⚡ Use Veto
           </button>
-        )}
-        {msg && <span style={{ marginLeft: 8 }}>{msg}</span>}
+          {isHost && (
+            <button 
+              title="Restart movie recommendation process to genre nomination" 
+              onClick={async ()=>{ try { await api.resetGenres(code!); nav(`/g/${code}/nominate-genres`) } catch(e){} }}
+              className="btn btn-danger"
+            >
+              🔄 Restart
+            </button>
+          )}
+        </div>
       </div>
+      
+      {msg && <div className="alert alert-info">{msg}</div>}
       <Swipe code={code} />
     </div>
   )

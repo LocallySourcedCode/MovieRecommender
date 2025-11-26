@@ -60,6 +60,11 @@ jobs:
           cp requirements.txt deploy_package/
           # Stamp deployed commit for verification on server
           git rev-parse HEAD > deploy_package/version.txt
+          # Create .env file with TMDb credentials from GitHub secrets
+          cat > deploy_package/.env << EOF
+          TMDB_READ_TOKEN=${{ secrets.TMDB_READ_TOKEN }}
+          TMDB_REGION=US
+          EOF
 
       - name: Configure SSH
         run: |
@@ -106,7 +111,6 @@ jobs:
         run: |
           rsync -avz --delete \
             --exclude ".venv/" \
-            --exclude ".env" \
             -e "ssh -i ~/.ssh/deploy_key.pem" \
             deploy_package/ \
             $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_DIR/
@@ -133,7 +137,7 @@ jobs:
               sudo dnf install -y python3.11 || sudo yum install -y python3.11 || true
             fi
             # Ensure systemd unit points at the canonical directory
-            sudo bash -lc $'cat > /etc/systemd/system/movierec.service <<\'EOF\'\n[Unit]\nDescription=MovieRecommender FastAPI (Uvicorn)\nAfter=network.target\n\n[Service]\nUser=ec2-user\nWorkingDirectory=/home/ec2-user/MovieRecommender-Henry\nEnvironment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"\nExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000\nRestart=always\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nEOF'
+            sudo bash -lc $'cat > /etc/systemd/system/movierec.service <<\'EOF\'\n[Unit]\nDescription=MovieRecommender FastAPI (Uvicorn)\nAfter=network.target\n\n[Service]\nUser=ec2-user\nWorkingDirectory=/home/ec2-user/MovieRecommender-Henry\nEnvironmentFile=/home/ec2-user/MovieRecommender-Henry/.env\nEnvironment="PATH=/home/ec2-user/MovieRecommender-Henry/.venv/bin:/usr/local/bin:/usr/bin"\nExecStart=/home/ec2-user/MovieRecommender-Henry/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000\nRestart=always\nRestartSec=2\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\nEOF'
 
             # Reload unit to pick up any changes
             sudo systemctl daemon-reload
