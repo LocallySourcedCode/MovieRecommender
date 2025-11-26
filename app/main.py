@@ -1254,6 +1254,10 @@ def _maybe_advance_after_nominations(session: Session, group: Group):
                 if taken >= 2:
                     break
             group.phase = "movie_selection"
+            group.veto_enabled = True
+            for p in parts:
+                p.has_veto = True
+                session.add(p)
             session.add(group)
             session.commit()
             return
@@ -1286,6 +1290,10 @@ def _maybe_finalize_after_votes(session: Session, group: Group):
             for gname in top2:
                 session.add(GenreFinalized(group_id=group.id, genre=gname))
             group.phase = "movie_selection"
+            group.veto_enabled = True
+            for p in parts:
+                p.has_veto = True
+                session.add(p)
             session.add(group)
             session.commit()
 

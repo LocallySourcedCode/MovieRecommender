@@ -23,6 +23,25 @@ export function Movies() {
     }
   }, [code])
 
+  useEffect(() => {
+    let active = true
+    async function poll() {
+      try {
+        const p = await api.getProgress(code!)
+        if (!active) return
+        if (p.phase === 'genre_nomination') {
+          nav(`/g/${code}/nominate-genres`)
+        } else if (p.phase === 'setup') {
+          nav(`/g/${code}`)
+        }
+      } catch {}
+      if (active) setTimeout(poll, 3000)
+    }
+    poll()
+    return () => { active = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, nav])
+
   async function useVeto() {
     setMsg(null)
     try {
