@@ -259,7 +259,7 @@ export function GroupLobby() {
         </div>
       )}
       
-      {progress.phase !== 'setup' && (
+      {progress && progress.phase !== 'setup' && (
         <div className="card" style={{ marginTop: '2rem' }}>
           <h3 className="card-title">Quick Actions</h3>
           <div className="btn-group" style={{ flexDirection: 'column' }}>
