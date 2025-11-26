@@ -775,6 +775,14 @@ def use_veto(code: str, token: str = Depends(oauth2_scheme), session: Session = 
     if participant.veto_used:
         raise HTTPException(status_code=409, detail="Veto already used")
 
+    # If no candidate is active (e.g. start of phase), try to fetch one first
+    if not group.current_movie_id:
+        try:
+            get_current_movie(code=code, token=token, session=session)
+            session.refresh(group)
+        except Exception:
+            pass
+
     if not group.current_movie_id:
         raise HTTPException(status_code=409, detail="No active candidate")
     current = session.get(MovieCandidate, group.current_movie_id)

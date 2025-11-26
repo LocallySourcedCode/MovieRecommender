@@ -8,6 +8,7 @@ export function Movies() {
   const nav = useNavigate()
   const [msg, setMsg] = useState<string | null>(null)
   const [isHost, setIsHost] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   if (!code) return <div>Missing group code</div>
 
@@ -46,7 +47,10 @@ export function Movies() {
     setMsg(null)
     try {
       const res = await api.useVeto(code!)
-      if (res?.status === 'current') setMsg('Current movie vetoed. A new option is shown.')
+      if (res?.status === 'current') {
+        setMsg('Current movie vetoed. A new option is shown.')
+        setRefreshKey(k => k + 1)
+      }
     } catch (err: any) {
       setMsg(err?.message || 'Veto failed')
     }
@@ -76,7 +80,7 @@ export function Movies() {
       </div>
       
       {msg && <div className="alert alert-info">{msg}</div>}
-      <Swipe code={code} />
+      <Swipe key={refreshKey} code={code} />
     </div>
   )
 }
