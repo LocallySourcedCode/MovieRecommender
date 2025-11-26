@@ -259,20 +259,22 @@ export function GroupLobby() {
         </div>
       )}
       
-      <div className="card" style={{ marginTop: '2rem' }}>
-        <h3 className="card-title">Quick Actions</h3>
-        <div className="btn-group" style={{ flexDirection: 'column' }}>
-          <button onClick={() => nav(`/g/${code}/nominate-genres`)} className="btn btn-secondary">
-            🎭 Nominate Genres
-          </button>
-          <button onClick={() => nav(`/g/${code}/vote-genres`)} className="btn btn-secondary">
-            🗳️ Vote Genres
-          </button>
-          <button onClick={() => nav(`/g/${code}/movies`)} className="btn btn-secondary">
-            🎬 Movie Voting
-          </button>
+      {progress.phase !== 'setup' && (
+        <div className="card" style={{ marginTop: '2rem' }}>
+          <h3 className="card-title">Quick Actions</h3>
+          <div className="btn-group" style={{ flexDirection: 'column' }}>
+            <button onClick={() => nav(`/g/${code}/nominate-genres`)} className="btn btn-secondary">
+              🎭 Nominate Genres
+            </button>
+            <button onClick={() => nav(`/g/${code}/vote-genres`)} className="btn btn-secondary">
+              🗳️ Vote Genres
+            </button>
+            <button onClick={() => nav(`/g/${code}/movies`)} className="btn btn-secondary">
+              🎬 Movie Voting
+            </button>
+          </div>
         </div>
-      </div>
+      )}
       
       <div className="card" style={{ 
         background: 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)', 

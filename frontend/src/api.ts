@@ -41,7 +41,7 @@ export const api = {
     return data
   },
   async whoami() {
-    return request('/whoami', { cache: 'no-store' })
+    return request(`/whoami?t=${Date.now()}`, { cache: 'no-store' })
   },
   async createGroupGuest(display_name: string, streaming_services?: string[]) {
     const data = await request('/groups', { method: 'POST', body: JSON.stringify({ display_name, streaming_services }), skipAuth: true })
@@ -100,7 +100,7 @@ export const api = {
     return request(`/groups/${code}/genres/reset`, { method: 'POST' })
   },
   async getProgress(code: string) {
-    return request(`/groups/${code}/progress`, { cache: 'no-store' })
+    return request(`/groups/${code}/progress?t=${Date.now()}`, { cache: 'no-store' })
   },
   async startNomination(code: string) {
     return request(`/groups/${code}/start`, { method: 'POST' })
