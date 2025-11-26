@@ -43,6 +43,8 @@ export function VoteGenres() {
         if (!active) return
         if (p.phase === 'movie_selection') {
           nav(`/g/${code}/movies`)
+        } else if (p.phase === 'setup' || p.phase === 'lobby') {
+          nav(`/g/${code}`)
         }
         // When finalized, stay on this page to show genre voting results
       } catch {}

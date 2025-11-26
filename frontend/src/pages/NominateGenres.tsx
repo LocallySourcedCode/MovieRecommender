@@ -29,6 +29,7 @@ export function NominateGenres() {
       const p = await api.getProgress(code!)
       setProgress({ nominated_count: p.nominated_count, total_participants: p.total_participants, phase: p.phase })
       if (p.phase === 'genre_voting') nav(`/g/${code}/vote-genres`)
+      if (p.phase === 'setup' || p.phase === 'lobby') nav(`/g/${code}`)
     } catch {}
   }
 

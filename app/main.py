@@ -1309,7 +1309,7 @@ def group_progress(code: str, response: Response, token: str = Depends(oauth2_sc
     group = session.exec(select(Group).where(Group.code == code)).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
-    _require_member(session, group, token)
+    participant = _require_member(session, group, token)
     parts = _participants_in_group(session, group.id)
     total = len(parts)
     nominated = _count_distinct_nominees(session, group.id)
@@ -1325,6 +1325,7 @@ def group_progress(code: str, response: Response, token: str = Depends(oauth2_sc
 
     return {
         "phase": group.phase,
+        "is_host": participant.is_host,
         "total_participants": total,
         "nominated_count": nominated,
         "voted_count": voted,

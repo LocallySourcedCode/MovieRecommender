@@ -148,12 +148,12 @@ export function GroupLobby() {
               Go to Movie Voting →
             </button>
           )}
-          {(progress.phase === 'setup' || progress.phase === 'lobby') && who?.is_host && (
+          {(progress.phase === 'setup' || progress.phase === 'lobby') && progress.is_host && (
              <button onClick={startVoting} className="btn btn-primary btn-large">
                Start Voting Process →
              </button>
           )}
-          {(progress.phase === 'setup' || progress.phase === 'lobby') && !who?.is_host && (
+          {(progress.phase === 'setup' || progress.phase === 'lobby') && !progress.is_host && (
              <div style={{ textAlign: 'center', padding: '1rem', color: '#6b7280' }}>
                Waiting for the host to start the voting process...
              </div>

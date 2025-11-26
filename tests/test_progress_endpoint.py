@@ -53,3 +53,33 @@ def test_progress_flags_and_phase_transitions(test_client, db_session):
     # Database has finalized rows
     finals_db = db_session.exec(select(GenreFinalized)).all()
     assert any(f.genre in ("Action", "Comedy") for f in finals_db)
+
+
+def test_progress_returns_is_host(test_client):
+    # 1. Host creates group (User flow)
+    import time
+    email = f"h_{time.time()}@ex.com"
+    password = "password123"
+    r = test_client.post("/auth/register", json={"email": email, "password": password})
+    assert r.status_code == 201, f"Register failed: {r.text}"
+    
+    r = test_client.post("/auth/login", data={"username": email, "password": password})
+    assert r.status_code == 200, f"Login failed: {r.text}"
+    token = r.json()["access_token"]
+    
+    r = test_client.post("/groups", headers=auth_header(token))
+    code = r.json()["group"]["code"]
+    
+    # Check Host Progress
+    p1 = test_client.get(f"/groups/{code}/progress", headers=auth_header(token))
+    assert p1.status_code == 200
+    assert p1.json()["is_host"] is True
+
+    # 2. Guest joins
+    j = test_client.post(f"/groups/{code}/join", json={"display_name": "Guest"})
+    g_token = j.json()["access_token"]
+    
+    # Check Guest Progress
+    p2 = test_client.get(f"/groups/{code}/progress", headers=auth_header(g_token))
+    assert p2.status_code == 200
+    assert p2.json()["is_host"] is False
