@@ -31,7 +31,7 @@ export function Movies() {
         if (!active) return
         if (p.phase === 'genre_nomination') {
           nav(`/g/${code}/nominate-genres`)
-        } else if (p.phase === 'setup') {
+        } else if (p.phase === 'setup' || p.phase === 'lobby') {
           nav(`/g/${code}`)
         }
       } catch {}

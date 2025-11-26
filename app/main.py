@@ -199,7 +199,7 @@ def config():
 
 
 def _is_group_active(g: Group) -> bool:
-    return (g.phase or "setup") != "finalized"
+    return (g.phase or "lobby") != "finalized"
 
 
 def _find_active_group_for_user(session: Session, user_id: int) -> Optional[Group]:
@@ -330,7 +330,7 @@ def create_group(
             )
         # Create group with host_user_id
         group = Group(code=code, host_user_id=principal.id,
-                      phase="setup")
+                      phase="lobby")
         session.add(group)
         session.commit()
         session.refresh(group)
@@ -347,7 +347,7 @@ def create_group(
         if guest_payload is None or not guest_payload.display_name:
             raise HTTPException(
                 status_code=422, detail="display_name is required for guests")
-        group = Group(code=code, host_user_id=None, phase="setup")
+        group = Group(code=code, host_user_id=None, phase="lobby")
         session.add(group)
         session.commit()
         session.refresh(group)
@@ -1013,9 +1013,9 @@ def start_nomination(
     if not principal.is_host:
         raise HTTPException(status_code=403, detail="Only host can start nominations")
 
-    # Allow restarting if already in nomination, or starting from setup
-    if group.phase not in ("setup", "genre_nomination"):
-        raise HTTPException(status_code=400, detail="Group is not in setup phase")
+    # Allow restarting if already in nomination, or starting from setup/lobby
+    if group.phase not in ("setup", "lobby", "genre_nomination"):
+        raise HTTPException(status_code=400, detail="Group is not in lobby phase")
 
     group.phase = "genre_nomination"
     session.add(group)

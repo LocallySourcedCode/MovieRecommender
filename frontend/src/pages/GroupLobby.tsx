@@ -87,7 +87,7 @@ export function GroupLobby() {
   }
 
   function getPhaseDisplay(phase: string) {
-    if (phase === 'setup') return { name: 'Waiting for Host', icon: '⏳', color: '#f3f4f6' }
+    if (phase === 'setup' || phase === 'lobby') return { name: 'Waiting for Host', icon: '⏳', color: '#f3f4f6' }
     if (phase === 'genre_nomination') return { name: 'Genre Nomination', icon: '🎭', color: '#dbeafe' }
     if (phase === 'genre_voting') return { name: 'Genre Voting', icon: '🗳️', color: '#fef3c7' }
     if (phase === 'movie_selection') return { name: 'Movie Selection', icon: '🎬', color: '#fce7f3' }
@@ -148,12 +148,12 @@ export function GroupLobby() {
               Go to Movie Voting →
             </button>
           )}
-          {progress.phase === 'setup' && who?.is_host && (
+          {(progress.phase === 'setup' || progress.phase === 'lobby') && who?.is_host && (
              <button onClick={startVoting} className="btn btn-primary btn-large">
                Start Voting Process →
              </button>
           )}
-          {progress.phase === 'setup' && !who?.is_host && (
+          {(progress.phase === 'setup' || progress.phase === 'lobby') && !who?.is_host && (
              <div style={{ textAlign: 'center', padding: '1rem', color: '#6b7280' }}>
                Waiting for the host to start the voting process...
              </div>
@@ -259,7 +259,7 @@ export function GroupLobby() {
         </div>
       )}
       
-      {progress && progress.phase !== 'setup' && (
+      {progress && progress.phase !== 'setup' && progress.phase !== 'lobby' && (
         <div className="card" style={{ marginTop: '2rem' }}>
           <h3 className="card-title">Quick Actions</h3>
           <div className="btn-group" style={{ flexDirection: 'column' }}>

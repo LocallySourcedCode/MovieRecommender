@@ -25,7 +25,10 @@ def test_progress_flags_and_phase_transitions(test_client, db_session):
     assert p0.status_code == 200
     d0 = p0.json()
     assert d0["nominated_count"] == 0 and d0["voted_count"] == 0
-    assert d0["phase"] in ("genre_nomination", "setup")
+    assert d0["phase"] == "lobby"
+
+    # Start nomination phase
+    test_client.post(f"/groups/{code}/start", headers=auth_header(t1))
 
     # Each nominates one -> phase should advance to genre_voting
     test_client.post(f"/groups/{code}/genres/nominate", headers=auth_header(t1), json={"genres": ["Action"]})
