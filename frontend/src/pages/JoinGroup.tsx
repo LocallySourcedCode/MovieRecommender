@@ -30,15 +30,19 @@ export function JoinGroup() {
           if (who?.kind === 'participant') {
             const ok = window.confirm('You are already in a group. Leave or disband it before joining another?')
             if (!ok) return
+            
+            const nameToUse = who.display_name || displayName
             await api.leaveCurrent()
             clearToken()
-            res = await api.joinGroupGuest(code, displayName, services.length ? services : undefined)
+            res = await api.joinGroupGuest(code, nameToUse, services.length ? services : undefined)
           } else {
             res = await api.joinGroupAsUser(code)
           }
         } catch {
-          // token invalid -> treat as guest
-          res = await api.joinGroupGuest(code, displayName, services.length ? services : undefined)
+          // token invalid or fetch failed
+          clearToken()
+          setError('Session expired or invalid. Please enter your name and try again.')
+          return
         }
       } else {
         res = await api.joinGroupGuest(code, displayName, services.length ? services : undefined)
