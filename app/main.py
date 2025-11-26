@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from jose import jwt, JWTError
 from sqlmodel import Session, select
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Response
 from collections import Counter
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -1291,7 +1291,12 @@ def _maybe_finalize_after_votes(session: Session, group: Group):
 
 
 @app.get("/groups/{code}/progress")
-def group_progress(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+def group_progress(code: str, response: Response, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    # Prevent caching of progress updates
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     ensure_tables(session)
     group = session.exec(select(Group).where(Group.code == code)).first()
     if not group:
