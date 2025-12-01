@@ -85,16 +85,19 @@ export const api = {
     }
   },
   async getGenreNominations(code: string) {
-    return request(`/groups/${code}/genres/nominations`)
+    return request(`/groups/${code}/genres/nominations`, { cache: 'no-store' })
   },
   async nominateGenres(code: string, genres: string[]) {
     return request(`/groups/${code}/genres/nominate`, { method: 'POST', body: JSON.stringify({ genres }) })
   },
   async getGenreStandings(code: string) {
-    return request(`/groups/${code}/genres/standings`)
+    return request(`/groups/${code}/genres/standings`, { cache: 'no-store' })
   },
   async voteGenre(code: string, genre: string) {
     return request(`/groups/${code}/genres/vote`, { method: 'POST', body: JSON.stringify({ genre }) })
+  },
+  async finalizeGenres(code: string) {
+    return request(`/groups/${code}/genres/finalize`, { method: 'POST' })
   },
   async resetGenres(code: string) {
     return request(`/groups/${code}/genres/reset`, { method: 'POST' })

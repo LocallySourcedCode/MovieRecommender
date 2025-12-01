@@ -51,7 +51,8 @@ export function VoteGenres() {
       if (active) setTimeout(poll, 3000)
     }
     poll()
-    return () => { active = false }
+    const standingsTimer = setInterval(() => { refresh().catch(()=>{}) }, 3000)
+    return () => { active = false; clearInterval(standingsTimer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code])
 
@@ -59,6 +60,7 @@ export function VoteGenres() {
     if (!msg) return 'Vote failed'
     if (msg.includes('Vote limit reached')) return 'You\'ve used all 3 of your votes.'
     if (msg.includes('Genre not nominated')) return 'That genre is not currently nominated.'
+    if (msg.includes('not currently open')) return 'Voting is not open yet.'
     return msg
   }
 
@@ -129,14 +131,27 @@ export function VoteGenres() {
         </div>
       </div>
       
-      <div className="card" style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-        <button 
-          onClick={() => nav(`/g/${code}/movies`)}
-          className="btn btn-primary"
-          style={{ flex: 1, minWidth: '200px' }}
-        >
-          🎬 Go to Movie Selection
-        </button>
+      <div className="card" style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        {isHost ? (
+          <button 
+            onClick={async ()=>{ 
+              setError(null); setMessage(null)
+              try { 
+                await api.finalizeGenres(code!)
+                // progress poller will navigate; also nudge immediately
+                nav(`/g/${code}/movies`)
+              } catch(err: any) { setError(err?.message || 'Failed to finalize') }
+            }}
+            className="btn btn-primary"
+            style={{ flex: 1, minWidth: '200px' }}
+          >
+            ✅ Finalize Genres & Continue
+          </button>
+        ) : (
+          <div style={{ flex: 1, minWidth: '200px', color: '#9ca3af' }}>
+            Waiting for host to finalize…
+          </div>
+        )}
         {isHost && (
           <button 
             title="Restart movie recommendation process to genre nomination" 

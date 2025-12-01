@@ -45,8 +45,9 @@ export function NominateGenres() {
     } else {
       setIsHost(false)
     }
-    const t = setInterval(fetchProgress, 3000)
-    return () => clearInterval(t)
+    const t1 = setInterval(fetchProgress, 3000)
+    const t2 = setInterval(refresh, 3000)
+    return () => { clearInterval(t1); clearInterval(t2) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code])
 
@@ -72,8 +73,7 @@ export function NominateGenres() {
       }
       await api.nominateGenres(code, selected)
       await refresh()
-      // After nominate, suggest going to vote screen
-      nav(`/g/${code}/vote-genres`)
+      // Do not auto-navigate; let progress poller transition when group is ready
     } catch (err: any) {
       setError(friendlyError(err?.message))
     } finally {

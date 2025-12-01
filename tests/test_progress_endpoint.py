@@ -39,15 +39,24 @@ def test_progress_flags_and_phase_transitions(test_client, db_session):
     assert d1["all_nominated"] is True
     assert d1["phase"] == "genre_voting"
 
-    # Each casts a vote -> finalize top2 and move to movie_selection
+    # Each casts a vote -> should NOT auto-finalize; remains in genre_voting until host finalizes
     test_client.post(f"/groups/{code}/genres/vote", headers=auth_header(t1), json={"genre": "Action"})
     test_client.post(f"/groups/{code}/genres/vote", headers=auth_header(t2), json={"genre": "Comedy"})
 
     p2 = test_client.get(f"/groups/{code}/progress", headers=auth_header(t1))
     d2 = p2.json()
     assert d2["all_voted"] is True
-    assert d2["phase"] == "movie_selection"
-    finals = d2.get("finalized_genres")
+    # Still in voting phase until host finalizes
+    assert d2["phase"] == "genre_voting"
+
+    # Host finalizes and moves to movie_selection
+    fin = test_client.post(f"/groups/{code}/genres/finalize", headers=auth_header(t1))
+    assert fin.status_code == 200
+
+    p3 = test_client.get(f"/groups/{code}/progress", headers=auth_header(t1))
+    d3 = p3.json()
+    assert d3["phase"] == "movie_selection"
+    finals = d3.get("finalized_genres")
     assert set(finals) == {"Action", "Comedy"}
 
     # Database has finalized rows

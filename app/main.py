@@ -37,9 +37,7 @@ import string
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1094,12 +1092,16 @@ def nominate_genres(
 
 
 @app.get("/groups/{code}/genres/nominations")
-def list_nominations(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+def list_nominations(code: str, response: Response, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
     ensure_tables(session)
     group = session.exec(select(Group).where(Group.code == code)).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     _require_member(session, group, token)
+    # Prevent caching so clients always see fresh nominations during live sessions
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     return {"nominations": _genre_tally(session, group.id), "allowed": ALLOWED_GENRES}
 
 
@@ -1115,6 +1117,10 @@ def vote_genre(
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     participant = _require_member(session, group, token)
+
+    # Only allow voting during the genre voting phase
+    if group.phase != "genre_voting":
+        raise HTTPException(status_code=409, detail="Genre voting is not currently open")
 
     cg = _canonical_genre(payload.genre)
     if not cg:
@@ -1142,12 +1148,14 @@ def vote_genre(
     session.add(GenreVote(group_id=group.id,
                 participant_id=participant.id, genre=cg, value=1))
     session.commit()
-    _maybe_finalize_after_votes(session, group)
+    # Auto-finalize unless host-controlled finalize is enabled via env flag
+    if not _require_host_finalize():
+        _maybe_finalize_after_votes(session, group)
     return {"ok": True, "voted": cg}
 
 
 @app.get("/groups/{code}/genres/standings")
-def genre_standings(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+def genre_standings(code: str, response: Response, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
     """Return vote tallies for nominated genres and the current plurality leader.
     Does not advance any phase; purely informational for the UI.
     """
@@ -1156,6 +1164,11 @@ def genre_standings(code: str, token: str = Depends(oauth2_scheme), session: Ses
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     _require_member(session, group, token)
+
+    # Prevent caching so standings refresh in near-real-time
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
 
     # Build tally for votes
     votes = session.exec(select(GenreVote).where(
@@ -1173,6 +1186,55 @@ def genre_standings(code: str, token: str = Depends(oauth2_scheme), session: Ses
         "nominations": _genre_tally(session, group.id),
         "allowed": ALLOWED_GENRES,
     }
+
+
+@app.post("/groups/{code}/genres/finalize")
+def finalize_genres(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    """Host-only: finalize the top two genres and advance to movie selection.
+
+    This endpoint replaces automatic advancement after voting. The host can
+    trigger it when the group is ready. If insufficient votes are present,
+    falls back to nomination counts to select top two genres.
+    """
+    ensure_tables(session)
+    group = session.exec(select(Group).where(Group.code == code)).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    caller = _require_member(session, group, token)
+    if not caller.is_host:
+        raise HTTPException(status_code=403, detail="Only host can finalize genres")
+
+    # Tally votes
+    votes = session.exec(select(GenreVote).where(GenreVote.group_id == group.id)).all()
+    tally = Counter()
+    for v in votes:
+        tally[v.genre] += (v.value or 0)
+    top2 = [g for g, _c in tally.most_common(2)]
+
+    # Fallback to nomination counts if votes are insufficient
+    if len(top2) < 2:
+        noms = _genre_tally(session, group.id)
+        top2 = [row["genre"] for row in noms[:2]]
+
+    if len(top2) < 2:
+        raise HTTPException(status_code=409, detail="Need at least two nominated genres to finalize")
+
+    # Reset finalized genres and set the two chosen
+    for old in session.exec(select(GenreFinalized).where(GenreFinalized.group_id == group.id)).all():
+        session.delete(old)
+    for gname in top2:
+        session.add(GenreFinalized(group_id=group.id, genre=gname))
+
+    # Advance phase; enable vetoes
+    group.phase = "movie_selection"
+    group.veto_enabled = True
+    for p in _participants_in_group(session, group.id):
+        p.has_veto = True
+        session.add(p)
+    session.add(group)
+    session.commit()
+
+    return {"ok": True, "finalized": top2, "phase": group.phase}
 
 
 @app.post("/groups/{code}/genres/reset")
@@ -1342,3 +1404,8 @@ def group_progress(code: str, response: Response, token: str = Depends(oauth2_sc
         "finalized_genres": finalized,
         "winner_movie": winner_movie,
     }
+
+def _require_host_finalize() -> bool:
+    # When true, the backend will not auto-advance after genre votes; host must POST /genres/finalize
+    v = os.getenv("REQUIRE_HOST_FINALIZE", "true").strip().lower()
+    return v in ("1", "true", "yes", "on")
