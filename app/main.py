@@ -211,6 +211,11 @@ def _find_active_group_for_user(session: Session, user_id: int) -> Optional[Grou
     return None
 
 
+def _coin_flip() -> bool:
+    """Isolated coin flip helper so tests can monkeypatch without affecting random.choice globally."""
+    return bool(random.choice([True, False]))
+
+
 def _disband_group(session: Session, group: Group):
     # Delete all related rows to fully remove the group
     # Movie votes
@@ -503,13 +508,18 @@ def _candidate_payload(movie: MovieCandidate) -> dict:
     }
 
 
-@app.get("/groups/{code}/movies/current")
-def get_current_movie(code: str, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+def _get_current_movie_internal(code: str, token: str, session: Session) -> dict:
     ensure_tables(session)
     group = session.exec(select(Group).where(Group.code == code)).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
     _ = _require_member(session, group, token)
+
+    # If the group already finalized a winner, return it so clients can update immediately
+    if (group.phase or "").lower() == "finalized" and group.winner_movie_id:
+        winner = session.get(MovieCandidate, group.winner_movie_id)
+        if winner:
+            return {"status": "finalized", "winner": _candidate_payload(winner)}
 
     # Purge any non-TMDb candidates if TMDb is configured to guarantee no demo leftovers
     tmdb_configured = bool(os.getenv("TMDB_READ_TOKEN")
@@ -687,6 +697,15 @@ def get_current_movie(code: str, token: str = Depends(oauth2_scheme), session: S
     return {"status": "current", "candidate": _candidate_payload(movie)}
 
 
+@app.get("/groups/{code}/movies/current")
+def get_current_movie(code: str, response: Response, token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)):
+    # Prevent caching so clients always see the latest candidate/winner
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return _get_current_movie_internal(code=code, token=token, session=session)
+
+
 class VoteIn(BaseModel):
     accept: bool
 
@@ -735,6 +754,7 @@ def vote_current_movie(code: str, payload: VoteIn, token: str = Depends(oauth2_s
         select(Participant).where(Participant.group_id == group.id)).all())
     yes = sum(1 for v in votes if v.value == 1)
     no = sum(1 for v in votes if v.value == 0)
+    voters_for_current = len({v.participant_id for v in votes})
 
     # Strict majority accept -> finalize
     if yes > total_participants / 2:
@@ -755,7 +775,26 @@ def vote_current_movie(code: str, payload: VoteIn, token: str = Depends(oauth2_s
         session.add(group)
         session.commit()
         # Auto-move to next candidate
-        return get_current_movie(code=code, token=token, session=session)
+        return _get_current_movie_internal(code=code, token=token, session=session)
+
+    # If all participants have voted and it's a tie (e.g., 50/50), break tie randomly
+    if total_participants > 0 and voters_for_current >= total_participants and yes == no and (yes + no) == voters_for_current:
+        accept = _coin_flip()
+        if accept:
+            group.winner_movie_id = current.id
+            group.phase = "finalized"
+            session.add(group)
+            session.commit()
+            return {"status": "finalized", "winner": _candidate_payload(current)}
+        else:
+            current.disqualified = True
+            session.add(current)
+            for v in votes:
+                session.delete(v)
+            group.current_movie_id = None
+            session.add(group)
+            session.commit()
+            return _get_current_movie_internal(code=code, token=token, session=session)
 
     # Otherwise still pending
     return {"status": "pending"}
@@ -776,7 +815,7 @@ def use_veto(code: str, token: str = Depends(oauth2_scheme), session: Session = 
     # If no candidate is active (e.g. start of phase), try to fetch one first
     if not group.current_movie_id:
         try:
-            get_current_movie(code=code, token=token, session=session)
+            _get_current_movie_internal(code=code, token=token, session=session)
             session.refresh(group)
         except Exception:
             pass
@@ -805,7 +844,7 @@ def use_veto(code: str, token: str = Depends(oauth2_scheme), session: Session = 
     session.commit()
 
     # Move to next candidate
-    return get_current_movie(code=code, token=token, session=session)
+    return _get_current_movie_internal(code=code, token=token, session=session)
 
 
 @app.get("/", response_class=HTMLResponse)

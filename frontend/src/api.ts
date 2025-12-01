@@ -60,7 +60,7 @@ export const api = {
     return request(`/groups/${code}/join`, { method: 'POST' })
   },
   async currentMovie(code: string) {
-    return request(`/groups/${code}/movies/current`)
+    return request(`/groups/${code}/movies/current?t=${Date.now()}`, { cache: 'no-store' })
   },
   async voteMovie(code: string, accept: boolean) {
     return request(`/groups/${code}/movies/vote`, { method: 'POST', body: JSON.stringify({ accept }) })

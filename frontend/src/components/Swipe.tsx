@@ -13,13 +13,24 @@ export function Swipe({ code }: { code: string }) {
 
   async function refresh() {
     const data = await api.currentMovie(code)
-    setCand(data?.candidate || null)
+    setCand(data?.candidate || data?.winner || null)
     setStatus(data?.status || 'current')
     setImgOk(true)
   }
 
   useEffect(() => {
+    let active = true
     refresh().catch(err => setMessage(err?.message || 'Failed to load current movie'))
+    async function poll() {
+      try {
+        await refresh()
+      } catch (err: any) {
+        // keep showing previous state; swallow transient errors
+      }
+      if (active) setTimeout(poll, 3000)
+    }
+    poll()
+    return () => { active = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code])
 
